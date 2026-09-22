@@ -8,3 +8,5 @@
 .nomtable th{position:sticky;top:0;background:#fff;text-align:left;padding:8px 9px;border-bottom:2px solid #d0d5dd;white-space:nowrap;z-index:1}.nomtable td:nth-child(2){min-width:260px}.nomtable th:nth-child(2){min-width:260px}
 
 .formgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.formgrid label{margin:0}@media(max-width:650px){.formgrid{grid-template-columns:1fr}}
+
+[hidden]{display:none!important}
