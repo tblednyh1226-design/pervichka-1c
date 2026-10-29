@@ -97,7 +97,7 @@ function morningFindSections(rows,header){
     const isPastry=text.some(t=>/^(выпечка|кондитерская выпечка|булочные изделия|хлебобулочные изделия)\s*:?\s*$/.test(t));
     if(isPastry&&pastryStart<0){pastryStart=i;continue}
     if(pastryStart<0){
-      if(text.some(t=>/^компот(ы|\b)/.test(t)))compoteLast=i;
+      if(text.some(t=>/^компот(?:ы|\s|$|[:.])/.test(t)))compoteLast=i;
     }else if(i>pastryStart && (morningIsGroup(n)||morningIsGroup(first))){
       nextAfterPastry=i;break;
     }
