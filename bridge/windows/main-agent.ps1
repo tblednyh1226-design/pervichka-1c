@@ -92,7 +92,7 @@ try {
     if ($Install) { Install-Main; exit 0 }
     if (-not (Test-Path $cfgPath)) { throw 'MAIN не настроен. Запустите INSTALL_MAIN.cmd и введите код из Помогатора.' }
     $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $mutex = New-Object System.Threading.Mutex($false, 'Local\PomogatorMAINPlanWorker')
+    $mutex = New-Object -TypeName System.Threading.Mutex -ArgumentList @($false, 'Local\PomogatorMAINPlanWorker')
     if (-not $mutex.WaitOne(0,$false)) { if ($Once) { Write-Host 'Фоновая программа MAIN уже работает.' }; exit 0 }
     try {
         if ($Once) {
