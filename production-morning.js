@@ -87,7 +87,7 @@ function morningColumnSummary(ws,rows,header){
   return {candidates,rightmost:quantityColumns.length?quantityColumns[quantityColumns.length-1]:null};
 }
 function morningIsGroup(txt){
-  return /^(выпечка|кондитерские изделия|холодные закуски|первые блюда|вторые блюда|гарниры|напитки|компоты|десерты|салаты|блюда для завтраков|завтраки|дополнительный ассортимент|хлеб|комплексные обеды)(\s*[:.]?)$/i.test(morningNorm(txt));
+  return /^(выпечка|кондитерские изделия|холодные закуски|первые блюда|вторые блюда|гарниры|напитки|компоты|десерты|салаты|блюда для завтраков|завтраки|завтрак|дополнительный ассортимент|хлеб|комплексные обеды|комплексный обед|прочее)(\s*[:.]?)$/i.test(morningNorm(txt));
 }
 function morningFindSections(rows,header){
   let pastryStart=-1,compoteLast=-1,nextAfterPastry=rows.length;
@@ -123,7 +123,7 @@ function morningExtract(rows,header,col,from,to,warnings){
     }
     if(quantity<=0)continue;
     const code=header.codeCol===null?'':String(row[header.codeCol]??'').trim();
-    result.push({name,quantity,code,sourceRow:r+1});
+    result.push({name,quantity,code,weight:String(row[header.nameCol+1]??'').trim(),sourceRow:r+1});
   }
   return result;
 }
@@ -168,8 +168,8 @@ function morningPrintResult(){
   if(r.needsColumn){area.innerHTML='<p>Вкладка <b>'+morningEscape(r.sheet)+'</b> найдена. Не удалось определить крайний правый столбец итоговых количеств. Автоматического выбора нет.</p>';status.textContent='Требуется проверить итоговый столбец.';return}
   const cards=r.documents.map(d=>{
     const sum=d.items.reduce((s,x)=>s+x.quantity,0);
-    const body=d.items.map(x=>'<tr><td>'+morningEscape(x.name)+'</td><td>'+morningEscape(x.quantity)+'</td></tr>').join('');
-    return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable"><thead><tr><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
+    const body=d.items.map(x=>'<tr><td>'+morningEscape(x.name)+'</td><td>'+morningEscape(x.weight||'')+'</td><td>'+morningEscape(x.quantity)+'</td></tr>').join('');
+    return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable"><thead><tr><th>Блюдо</th><th>Вес / объём</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
   }).join('');
   const warnings=r.warnings.length?'<p style="color:#9d4b17"><b>Проверить:</b> '+r.warnings.map(morningEscape).join('; ')+'</p>':'';
   area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Крайний правый итоговый столбец: <b>'+morningEscape(r.selected.label)+'</b>.</p>'+warnings+cards;
