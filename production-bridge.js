@@ -7,6 +7,56 @@ function planBridgeStatus(message, bad) {
   if (el) { el.textContent=message; el.style.color=bad?'#b42318':''; }
 }
 const planGuestApi=SUPABASE_URL+'/functions/v1/plan-bridge-guest';
+// Private URL fragment contains the capability; it is not included in HTTP requests.
+// Anyone holding the private link can connect, so do not publish it.
+function planBridgeRefreshAccessUI(){
+  const linked=Boolean(planGuestStored().token);
+  const share=document.getElementById('planBridgeShareBtn');
+  if(share)share.hidden=!linked;
+  const codeRow=document.getElementById('planBridgeCodeRow');
+  if(codeRow)codeRow.hidden=linked;
+}
+async function planBridgeConnectFromLink(){
+  const fragment=location.hash.replace(/^#/,'');
+  const hash=new URLSearchParams(fragment);
+  const secret=(hash.get('main-access')||'').trim().toLowerCase();
+  if(!secret){planBridgeRefreshAccessUI();await planBridgeDeviceStatus();return;}
+  // Delete the secret from the address bar and browser history immediately.
+  history.replaceState(history.state,'',location.pathname+location.search);
+  if(!/^[0-9a-f]{32}$/.test(secret)){
+    planBridgeStatus('Ссылка подключения MAIN некорректна.',true);
+    return;
+  }
+  try{
+    planBridgeStatus('Подключаю MAIN по приватной ссылке…');
+    const response=await planGuestFetch('claim',{browser_token:secret},true);
+    localStorage.setItem('pomogator_guest_device_id',response.device_id);
+    localStorage.setItem('pomogator_guest_browser_token',secret);
+    planBridgeRefreshAccessUI();
+    show('iiko');
+    planBridgeStatus('MAIN подключён на этом устройстве без ввода кода.');
+    await planBridgeDeviceStatus();
+  }catch(e){
+    planBridgeStatus('Не удалось подключить MAIN по ссылке: '+(e.message||e),true);
+  }
+}
+async function planBridgeShareAccess(){
+  const {token}=planGuestStored();
+  if(!/^[0-9a-f]{32}$/.test(token)){
+    planBridgeStatus('Сначала подключите MAIN на этом компьютере.',true);
+    return;
+  }
+  const privateUrl=location.origin+location.pathname+'#main-access='+token;
+  try{
+    if(!navigator.clipboard?.writeText)throw new Error('Буфер обмена недоступен');
+    await navigator.clipboard.writeText(privateUrl);
+    planBridgeStatus('Приватная ссылка скопирована. Откройте её на другом устройстве. Не отправляйте посторонним.');
+  }catch(_){
+    // Clipboard may be restricted on some browsers. Show the link for manual copying.
+    window.prompt('Скопируйте эту приватную ссылку для своих устройств. Она даёт доступ к Excel:',privateUrl);
+    planBridgeStatus('Ссылка готова. Она даёт доступ к плану; не публикуйте её.');
+  }
+}
 function planGuestStored(){
   const deviceId=localStorage.getItem('pomogator_guest_device_id')||'';
   const token=localStorage.getItem('pomogator_guest_browser_token')||'';
@@ -36,6 +86,7 @@ async function planBridgePair(){
     localStorage.setItem('pomogator_guest_device_id',r.device_id);
     localStorage.setItem('pomogator_guest_browser_token',token);
     if(el)el.value='';
+    planBridgeRefreshAccessUI();
     planBridgeStatus('MAIN подключён к этому браузеру. Теперь можно запросить Excel.');
     await planBridgeDeviceStatus();
   }catch(e){planBridgeStatus('Ошибка подключения: '+(e.message||e),true)}
@@ -43,6 +94,7 @@ async function planBridgePair(){
 function planBridgeDisconnect(){
   localStorage.removeItem('pomogator_guest_device_id');
   localStorage.removeItem('pomogator_guest_browser_token');
+  planBridgeRefreshAccessUI();
   planBridgeBytes=null;
   const download=document.getElementById('planBridgeDownloadBtn');
   if(download)download.hidden=true;
@@ -138,5 +190,6 @@ async function planBridgeRequest() {
 document.addEventListener('DOMContentLoaded',()=>{
   const btn=document.querySelector("#home button[onclick=\"show('iiko')\"]");
   if(btn)btn.addEventListener('click',()=>setTimeout(planBridgeDeviceStatus,200));
-  planBridgeDeviceStatus();
+  // A shared link silently pairs this browser; no repeated code entry.
+  planBridgeConnectFromLink().catch(e=>planBridgeStatus('Ошибка подключения: '+(e.message||e),true));
 });
