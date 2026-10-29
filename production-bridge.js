@@ -76,6 +76,7 @@ function planBridgeTomorrow() {
 }
 function planBridgePreview(arraybuffer) {
   if(typeof XLSX==='undefined')throw new Error('Модуль Excel не загружен');
+  if(typeof morningPrepareFromBytes==='function')morningPrepareFromBytes(arraybuffer,'План производства с MAIN');
   const book=XLSX.read(arraybuffer,{type:'array',cellStyles:true});
   const target=planBridgeTomorrow();
   const expected=target.day+'.'+target.month;
