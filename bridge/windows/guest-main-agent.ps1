@@ -44,19 +44,19 @@ function Read-WorkbookSnapshot([string]$path) {
         $zip = $null
         try {
             $sharing = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
-            $source = New-Object System.IO.FileStream($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $sharing)
+            $source = [System.IO.FileStream]::new($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $sharing)
             $originalLength = $source.Length
             if ($originalLength -lt 4 -or $originalLength -gt 15000000) {
                 throw 'Размер Excel некорректен (максимум 15 МБ)'
             }
-            $memory = New-Object System.IO.MemoryStream
+            $memory = [System.IO.MemoryStream]::new()
             $source.CopyTo($memory)
             $bytes = $memory.ToArray()
             if ($bytes.Length -ne $originalLength -or $bytes[0] -ne 80 -or $bytes[1] -ne 75) {
                 throw 'Excel изменился в момент чтения'
             }
-            $zipMemory = New-Object System.IO.MemoryStream -ArgumentList (,$bytes)
-            $zip = New-Object System.IO.Compression.ZipArchive($zipMemory,[System.IO.Compression.ZipArchiveMode]::Read,$false)
+            $zipMemory = [System.IO.MemoryStream]::new($bytes)
+            $zip = [System.IO.Compression.ZipArchive]::new($zipMemory,[System.IO.Compression.ZipArchiveMode]::Read,$false)
             if (-not $zip.GetEntry('[Content_Types].xml')) {
                 throw 'Excel временно недоступен в формате XLSX'
             }
