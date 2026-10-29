@@ -6,22 +6,53 @@ function planBridgeStatus(message, bad) {
   const el = document.getElementById('planBridgeStatus');
   if (el) { el.textContent=message; el.style.color=bad?'#b42318':''; }
 }
-async function planBridgeCall(action,extra={}) {
-  const session = (await sb.auth.getSession()).data.session;
-  if(!session) throw new Error('Войдите в Помогатор');
-  if(!workspace?.id) throw new Error('Рабочее пространство ещё не загружено');
-  const rsp = await fetch(SUPABASE_URL+'/functions/v1/plan-bridge',{
-    method:'POST',
-    headers:{Authorization:'Bearer '+session.access_token,apikey:SUPABASE_KEY,'Content-Type':'application/json'},
-    body:JSON.stringify({action,workspace_id:workspace.id,...extra}),
-    cache:'no-store'
-  });
-  const json = await rsp.json().catch(()=>({ok:false,error:'Ошибка ответа сервера'}));
-  if(!rsp.ok || !json.ok) throw new Error(json.error||('Ошибка сервера '+rsp.status));
+const planGuestApi=SUPABASE_URL+'/functions/v1/plan-bridge-guest';
+function planGuestStored(){
+  const deviceId=localStorage.getItem('pomogator_guest_device_id')||'';
+  const token=localStorage.getItem('pomogator_guest_browser_token')||'';
+  return {deviceId,token};
+}
+async function planGuestFetch(action,extra={},isClaim=false){
+  const {deviceId,token}=planGuestStored();
+  if(!isClaim && (!deviceId||!token))throw new Error('Сначала подключите MAIN с помощью кода из программы на компьютере');
+  const headers={'Content-Type':'application/json','apikey':SUPABASE_KEY};
+  if(!isClaim){
+    headers['x-device-id']=deviceId;
+    headers['x-browser-token']=token;
+  }
+  const rsp=await fetch(planGuestApi,{method:'POST',headers,body:JSON.stringify({action,...extra}),cache:'no-store'});
+  const json=await rsp.json().catch(()=>({ok:false,error:'Ошибка ответа сервера'}));
+  if(!rsp.ok||!json.ok)throw new Error(json.error||('Ошибка сервера '+rsp.status));
   return json;
+}
+async function planBridgeCall(action,extra={}){ return planGuestFetch(action,extra); }
+async function planBridgePair(){
+  const el=document.getElementById('planBridgeCodeInput');
+  const token=String(el?.value||'').replace(/[\s-]/g,'').toLowerCase();
+  if(!/^[0-9a-f]{32}$/.test(token)){planBridgeStatus('Введите 32-символьный код, который показал установщик на MAIN.',true);return;}
+  try{
+    planBridgeStatus('Проверяю код MAIN…');
+    const r=await planGuestFetch('claim',{browser_token:token},true);
+    localStorage.setItem('pomogator_guest_device_id',r.device_id);
+    localStorage.setItem('pomogator_guest_browser_token',token);
+    if(el)el.value='';
+    planBridgeStatus('MAIN подключён к этому браузеру. Теперь можно запросить Excel.');
+    await planBridgeDeviceStatus();
+  }catch(e){planBridgeStatus('Ошибка подключения: '+(e.message||e),true)}
+}
+function planBridgeDisconnect(){
+  localStorage.removeItem('pomogator_guest_device_id');
+  localStorage.removeItem('pomogator_guest_browser_token');
+  planBridgeBytes=null;
+  const download=document.getElementById('planBridgeDownloadBtn');
+  if(download)download.hidden=true;
+  const preview=document.getElementById('planBridgePreview');if(preview)preview.textContent='';
+  const device=document.getElementById('planBridgeDevice');if(device)device.textContent='MAIN не подключён в этом браузере.';
+  planBridgeStatus('Привязка из браузера очищена. Для повторного подключения нужен код MAIN.');
 }
 async function planBridgeDeviceStatus() {
   try {
+    if(!planGuestStored().token){const el=document.getElementById('planBridgeDevice');if(el)el.textContent='MAIN не подключён. Введите код, который покажет установщик на MAIN.';return;}
     const r=await planBridgeCall('device_status');
     const el=document.getElementById('planBridgeDevice');
     if(!el)return;
@@ -36,13 +67,6 @@ async function planBridgeDeviceStatus() {
     const el=document.getElementById('planBridgeDevice');
     if(el)el.textContent='Не удалось проверить связь: '+(e.message||e);
   }
-}
-async function planBridgePair() {
-  try {
-    const r=await planBridgeCall('create_pair');
-    document.getElementById('planBridgeCode').textContent=r.code;
-    planBridgeStatus('Введи код в INSTALL_MAIN.cmd на компьютере MAIN. Код действует 10 минут.');
-  }catch(e){planBridgeStatus('Ошибка: '+(e.message||e),true)}
 }
 function planBridgeTomorrow() {
   const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',day:'2-digit',month:'2-digit',year:'numeric'}).formatToParts(new Date());
@@ -114,4 +138,5 @@ async function planBridgeRequest() {
 document.addEventListener('DOMContentLoaded',()=>{
   const btn=document.querySelector("#home button[onclick=\"show('iiko')\"]");
   if(btn)btn.addEventListener('click',()=>setTimeout(planBridgeDeviceStatus,200));
+  planBridgeDeviceStatus();
 });
