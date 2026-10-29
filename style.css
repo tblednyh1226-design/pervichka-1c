@@ -12,3 +12,7 @@
 [hidden]{display:none!important}
 
 .uploadrow{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #e5e7eb}.uploadrow span{text-align:right;color:#5f6b7a}.uploadrow:last-child{border-bottom:0}@media(max-width:650px){.uploadrow{display:block}.uploadrow span{display:block;text-align:left;margin-top:4px}}
+
+/* В гостевом режиме можно работать с Excel без организации и аккаунта. */
+body.guest-mode .context,body.guest-mode .headright{display:none!important}
+#guestNote{margin:0 0 16px}
