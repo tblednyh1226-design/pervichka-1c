@@ -1,5 +1,7 @@
 ﻿param([switch]$Install,[switch]$Run,[switch]$Once)
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1: load DPAPI types explicitly before registration.
+Add-Type -AssemblyName System.Security -ErrorAction Stop
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $api = 'https://dwdunpyzcfdwokoczenl.supabase.co/functions/v1/plan-bridge-guest'
 $defaultFile = '\\Main\data\План Меню и Бланки\ПЛАН ПРОИЗВОДСТВА С 17.08.2026.xlsx'
@@ -27,7 +29,7 @@ function Invoke-Bridge([string]$action,[hashtable]$payload,[string]$deviceId,[st
 }
 function Get-Secret([string]$encoded) {
     $encrypted = [Convert]::FromBase64String($encoded)
-    $plain = [Security.Cryptography.ProtectedData]::Unprotect($encrypted,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+    $plain = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
     return [Text.Encoding]::UTF8.GetString($plain)
 }
 function Run-One([pscustomobject]$cfg) {
@@ -58,9 +60,9 @@ function New-RandomHex([int]$length) {
     return ([BitConverter]::ToString($bytes)).Replace('-','').ToLowerInvariant()
 }
 function Protect-Secret([string]$secret) {
-    $sealed = [Security.Cryptography.ProtectedData]::Protect(
+    $sealed = [System.Security.Cryptography.ProtectedData]::Protect(
         [Text.Encoding]::UTF8.GetBytes($secret),$null,
-        [Security.Cryptography.DataProtectionScope]::CurrentUser)
+        [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
     return [Convert]::ToBase64String($sealed)
 }
 function Install-Main {
@@ -76,6 +78,9 @@ function Install-Main {
         $browserCode = Get-Secret $existing.browser_token_dpapi
         Write-Host 'Подключение уже создано. Показываю прежний код.'
     } else {
+        # Fail before registering if the built-in Windows encryption is unavailable.
+        $probe = Protect-Secret 'MAIN-DPAPI-TEST'
+        if ((Get-Secret $probe) -ne 'MAIN-DPAPI-TEST') { throw 'Проверка защиты ключей Windows не пройдена' }
         $token = New-RandomHex 32
         $browserCode = New-RandomHex 16
         $r = Invoke-Bridge 'register' @{main_token=$token;browser_token=$browserCode} '' ''
