@@ -80,12 +80,14 @@ function morningColumnSummary(ws,rows,header){
     const name=String(rows[header.row]?.[c]??'').trim();
     candidates.push({col:c,label:XLSX.utils.encode_col(c),name,numeric,blue,blueNumbers,headerBlue});
   }
-  // The *last* visually blue column; do not substitute last non-empty column.
-  const blues=candidates.filter(c=>c.blueNumbers>=2||(c.blue>=2&&c.headerBlue>=1));
-  return {candidates,blue:blues.length?blues[blues.length-1]:null};
+  // The plan's production totals are in the far-right populated quantity column.
+  // The fill may be saved as an Excel theme color, so never rely on blue RGB detection.
+  // Ignore isolated numbers in notes to the right of the production table.
+  const quantityColumns=candidates.filter(c=>c.numeric>=5);
+  return {candidates,rightmost:quantityColumns.length?quantityColumns[quantityColumns.length-1]:null};
 }
 function morningIsGroup(txt){
-  return /^(выпечка|кондитерские изделия|холодные закуски|первые блюда|вторые блюда|гарниры|напитки|компоты|десерты|салаты|блюда для завтраков|завтраки|дополнительный ассортимент|хлеб|комплексные обеды)(\s*[:.]?)$/i.test(morningNorm(txt));
+  return /^(выпечка|кондитерские изделия|холодные закуски|первые блюда|вторые блюда|гарниры|напитки|компоты|десерты|салаты|блюда для завтраков|завтраки|завтрак|дополнительный ассортимент|хлеб|комплексные обеды|комплексный обед|прочее)(\s*[:.]?)$/i.test(morningNorm(txt));
 }
 function morningFindSections(rows,header){
   let pastryStart=-1,compoteLast=-1,nextAfterPastry=rows.length;
@@ -121,7 +123,7 @@ function morningExtract(rows,header,col,from,to,warnings){
     }
     if(quantity<=0)continue;
     const code=header.codeCol===null?'':String(row[header.codeCol]??'').trim();
-    result.push({name,quantity,code,sourceRow:r+1});
+    result.push({name,quantity,code,weight:String(row[header.nameCol+1]??'').trim(),sourceRow:r+1});
   }
   return result;
 }
@@ -132,8 +134,8 @@ function morningAnalyze(book,date,overrideColumn){
   const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});
   const header=morningGetHeader(rows);
   const columns=morningColumnSummary(ws,rows,header);
-  const chosen=overrideColumn===null||overrideColumn===undefined?columns.blue:columns.candidates.find(c=>c.col===overrideColumn);
-  if(!chosen)return {sheet,date,header,columns,needsColumn:true,documents:[],warnings:['Цвет голубого столбца не распознан. Для проверки выберите его вручную.']};
+  const chosen=overrideColumn===null||overrideColumn===undefined?columns.rightmost:columns.candidates.find(c=>c.col===overrideColumn);
+  if(!chosen)return {sheet,date,header,columns,needsColumn:true,documents:[],warnings:['Крайний правый столбец с итоговыми количествами не определён. Для проверки выберите его вручную.']};
   const bounds=morningFindSections(rows,header);
   const warnings=[];
   const breakfastEnd=bounds.compoteLast>=0?bounds.compoteLast+1:bounds.pastryStart;
@@ -160,23 +162,23 @@ function morningPrintResult(){
   const r=morningState.result;
   if(!area||!status||!picker||!r)return;
   const opts=r.columns.candidates.map(c=>'<option value="'+c.col+'" '+(r.selected&&c.col===r.selected.col?'selected':'')+'>'+morningEscape(c.label+' · '+(c.name||'без заголовка')+' · '+c.numeric+' числовых значений'+(c.blue?', голубых ячеек '+c.blue:''))+'</option>').join('');
-  picker.innerHTML='<option value="">Проверка цвета / выбрать столбец</option>'+opts;
+  picker.innerHTML='<option value="">Выбрать итоговый столбец</option>'+opts;
   picker.hidden=!r.needsColumn;
   exportBtn.hidden=Boolean(r.needsColumn);
-  if(r.needsColumn){area.innerHTML='<p>Вкладка <b>'+morningEscape(r.sheet)+'</b> найдена. Не удалось определить голубую заливку. Автоматического выбора столбца нет.</p>';status.textContent='Требуется проверить цвет столбца.';return}
+  if(r.needsColumn){area.innerHTML='<p>Вкладка <b>'+morningEscape(r.sheet)+'</b> найдена. Не удалось определить крайний правый столбец итоговых количеств. Автоматического выбора нет.</p>';status.textContent='Требуется проверить итоговый столбец.';return}
   const cards=r.documents.map(d=>{
     const sum=d.items.reduce((s,x)=>s+x.quantity,0);
-    const body=d.items.map(x=>'<tr><td>'+morningEscape(x.name)+'</td><td>'+morningEscape(x.quantity)+'</td></tr>').join('');
-    return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable"><thead><tr><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
+    const body=d.items.map(x=>'<tr><td>'+morningEscape(x.name)+'</td><td>'+morningEscape(x.weight||'')+'</td><td>'+morningEscape(x.quantity)+'</td></tr>').join('');
+    return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable"><thead><tr><th>Блюдо</th><th>Вес / объём</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
   }).join('');
   const warnings=r.warnings.length?'<p style="color:#9d4b17"><b>Проверить:</b> '+r.warnings.map(morningEscape).join('; ')+'</p>':'';
-  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Последний голубой столбец: <b>'+morningEscape(r.selected.label)+'</b>.</p>'+warnings+cards;
+  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Крайний правый итоговый столбец: <b>'+morningEscape(r.selected.label)+'</b>.</p>'+warnings+cards;
   status.textContent='Предпросмотр готов. Это НЕ документы iiko. Никаких перемещений, расходных и проведения.';
 }
 function morningPrepareBook(book,name){
   morningState.book=book;morningState.fileName=name||'План производства.xlsx';
   morningState.result=null;morningState.selectedColumn=null;
-  document.getElementById('morningStatus').textContent='Ищу завтрашнюю вкладку и последний голубой столбец…';
+  document.getElementById('morningStatus').textContent='Ищу завтрашнюю вкладку и крайний правый итоговый столбец…';
   try{morningState.result=morningAnalyze(book,morningTomorrowMoscow(),null);morningPrintResult()}
   catch(e){document.getElementById('morningStatus').textContent='Проверка структуры: '+(e.message||e);document.getElementById('morningPreview').innerHTML='';document.getElementById('morningExportBtn').hidden=true}
 }
