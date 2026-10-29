@@ -1,4 +1,4 @@
-﻿param([switch]$Install,[switch]$Run,[switch]$Once)
+﻿param([switch]$Install,[switch]$Run,[switch]$Once,[switch]$Update)
 $ErrorActionPreference = 'Stop'
 # Windows PowerShell 5.1: load DPAPI types explicitly before registration.
 Add-Type -AssemblyName System.Security -ErrorAction Stop
@@ -32,6 +32,51 @@ function Get-Secret([string]$encoded) {
     $plain = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
     return [Text.Encoding]::UTF8.GetString($plain)
 }
+# Read an Excel workbook that may be open for editing. Never request a write lock.
+# If Excel is in the middle of saving, retry rather than sending a partial XLSX.
+function Read-WorkbookSnapshot([string]$path) {
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        $source = $null
+        $memory = $null
+        $zipMemory = $null
+        $zip = $null
+        try {
+            $sharing = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+            $source = [System.IO.FileStream]::new($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $sharing)
+            $originalLength = $source.Length
+            if ($originalLength -lt 4 -or $originalLength -gt 15000000) {
+                throw 'Размер Excel некорректен (максимум 15 МБ)'
+            }
+            $memory = [System.IO.MemoryStream]::new()
+            $source.CopyTo($memory)
+            $bytes = $memory.ToArray()
+            if ($bytes.Length -ne $originalLength -or $bytes[0] -ne 80 -or $bytes[1] -ne 75) {
+                throw 'Excel изменился в момент чтения'
+            }
+            $zipMemory = [System.IO.MemoryStream]::new($bytes)
+            $zip = [System.IO.Compression.ZipArchive]::new($zipMemory,[System.IO.Compression.ZipArchiveMode]::Read,$false)
+            if (-not $zip.GetEntry('[Content_Types].xml')) {
+                throw 'Excel временно недоступен в формате XLSX'
+            }
+            # Important: do not enumerate the byte array in PowerShell pipeline.
+            return ,$bytes
+        } catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt 6) {
+                Write-Log ('Excel занят или сохраняется; повторная попытка '+$attempt+'/6')
+                Start-Sleep -Seconds 2
+            }
+        } finally {
+            if ($zip) { $zip.Dispose() }
+            if ($zipMemory) { $zipMemory.Dispose() }
+            if ($memory) { $memory.Dispose() }
+            if ($source) { $source.Dispose() }
+        }
+    }
+    throw ('Не удалось прочитать Excel после повторных попыток: '+$lastError)
+}
 function Run-One([pscustomobject]$cfg) {
     $token = Get-Secret $cfg.token_dpapi
     $response = Invoke-Bridge 'poll' @{} $cfg.device_id $token
@@ -40,7 +85,7 @@ function Run-One([pscustomobject]$cfg) {
     Write-Log ('Получен запрос плана: '+$jobId)
     try {
         if (-not (Test-Path -LiteralPath $cfg.source_file -PathType Leaf)) { throw ('Не найден Excel по пути: '+$cfg.source_file) }
-        $fileBytes = [IO.File]::ReadAllBytes([string]$cfg.source_file)
+        $fileBytes = Read-WorkbookSnapshot ([string]$cfg.source_file)
         if ($fileBytes.Length -lt 4 -or $fileBytes.Length -gt 15000000) { throw 'Неверный размер Excel (максимум 15 МБ)' }
         $headers = @{'x-device-id'=[string]$cfg.device_id;'x-main-token'=$token;'x-job-id'=$jobId}
         $uploaded = Invoke-RestMethod -Uri ($api+'?action=upload') -Method Post -Headers $headers -ContentType 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' -Body $fileBytes -TimeoutSec 90
@@ -64,6 +109,47 @@ function Protect-Secret([string]$secret) {
         [Text.Encoding]::UTF8.GetBytes($secret),$null,
         [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
     return [Convert]::ToBase64String($sealed)
+}
+# Replace the installed script and restart only this agent. Existing pairing is preserved.
+function Update-Main {
+    if (-not (Test-Path -LiteralPath $cfgPath -PathType Leaf)) {
+        throw 'MAIN ещё не установлен. Сначала запустите INSTALL_MAIN_NO_LOGIN.cmd.'
+    }
+    $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $cfg.device_id -or -not $cfg.token_dpapi) { throw 'Нет ранее сохранённой привязки MAIN.' }
+    [void](Get-Secret $cfg.token_dpapi)
+    if ((Resolve-Path -LiteralPath $PSCommandPath).Path -eq $scriptPath) {
+        throw 'Запустите UPDATE_MAIN.cmd из распакованной новой папки, а не из установленной.'
+    }
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+        Where-Object {
+            $_.ProcessId -ne $PID -and $_.CommandLine -and
+            $_.CommandLine.Contains($scriptPath) -and
+            $_.CommandLine -match '(?i)(?:^|\s)-Run(?:\s|$)'
+        })
+    if ($processes.Count -gt 1) {
+        throw 'Обнаружено несколько фоновых процессов MAIN. Автоматическое обновление остановлено.'
+    }
+    foreach ($p in $processes) {
+        Write-Host ('Останавливаю старый модуль MAIN (PID '+$p.ProcessId+')…')
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+    }
+    Start-Sleep -Milliseconds 800
+    Copy-Item -LiteralPath $PSCommandPath -Destination $scriptPath -Force
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($startupPath)
+    $shortcut.TargetPath = (Join-Path $PSHOME 'powershell.exe')
+    $shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+$scriptPath+'" -Run'
+    $shortcut.WorkingDirectory = $homeDir
+    $shortcut.WindowStyle = 7
+    $shortcut.Description = 'Помогатор: чтение исходного Excel только по запросу'
+    $shortcut.Save()
+    Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
+        '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
+        '-File',('"'+$scriptPath+'"'),'-Run'
+    ) -WindowStyle Hidden
+    Write-Host 'Модуль MAIN обновлён и снова запущен.'
+    Write-Host 'Прежний код подключения сохранён. В браузере ничего менять не нужно.'
 }
 function Install-Main {
     Write-Host '=== Помогатор: MAIN без логина и пароля ==='
@@ -122,6 +208,7 @@ function Install-Main {
 }
 try {
     if ($Install) { Install-Main; exit 0 }
+    if ($Update) { Update-Main; exit 0 }
     if (-not (Test-Path $cfgPath)) { throw 'MAIN не настроен. Запустите INSTALL_MAIN.cmd и введите код из Помогатора.' }
     $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $mutex = New-Object -TypeName System.Threading.Mutex -ArgumentList @($false, 'Local\PomogatorMAINGuestPlanWorker')
