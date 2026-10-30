@@ -335,7 +335,7 @@ function iikoDraftCheck(){
       const controls=x.canMap?'<div><input type="search" id="iikoDraftFind-'+i+
         '" placeholder="Введите название блюда или артикул" value="'+iikoDraftHtml(x.prefix)+
         '" oninput="iikoDraftFilterChoices('+i+')">'+
-        '<label><input type="checkbox" id="iikoDraftAllTypes-'+i+
+        '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" style="width:16px;min-width:16px;max-width:16px;height:16px" id="iikoDraftAllTypes-'+i+
         '" onchange="iikoDraftFilterChoices('+i+')"> Все типы (товары, услуги и др.)</label>'+
         '<select id="iikoDraftChoose-'+i+'"><option value="">Ищу подходящие блюда…</option></select>'+
         '<small class="muted" id="iikoDraftChoiceNote-'+i+'"></small>'+
