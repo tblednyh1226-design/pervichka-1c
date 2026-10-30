@@ -6,12 +6,85 @@ function iikoLiveStatus(text,isError=false){
   const el=document.getElementById('iikoLiveStatus');
   if(el){el.textContent=text;el.style.color=isError?'#b42318':''}
 }
+// MAIN pairing grants access to the plan. iiko writes additionally require
+// a personal Pomogator session, so guests need an explicit sign-in form.
+function iikoLiveAuthMessage(message,isError=false){
+  const el=document.getElementById('iikoLiveAuthMessage');
+  if(el){el.textContent=message;el.style.color=isError?'#b42318':''}
+}
+function iikoLiveShowAuth(){
+  const card=document.getElementById('iikoLiveAuthCard');
+  if(card)card.hidden=false;
+  iikoLiveAuthMessage('Войдите в аккаунт Помогатора. Код MAIN останется сохранённым.');
+  const input=document.getElementById('iikoLiveLoginEmail');
+  if(input&&typeof input.focus==='function')input.focus();
+}
+function iikoLiveHideAuth(){
+  const card=document.getElementById('iikoLiveAuthCard');
+  if(card)card.hidden=true;
+  const pass=document.getElementById('iikoLiveLoginPassword');
+  if(pass)pass.value='';
+}
+async function iikoLiveSignIn(){
+  const email=String(document.getElementById('iikoLiveLoginEmail')?.value||'').trim().toLowerCase();
+  const password=String(document.getElementById('iikoLiveLoginPassword')?.value||'');
+  if(!email||!password){iikoLiveAuthMessage('Введите электронную почту и пароль.',true);return}
+  const btn=document.getElementById('iikoLiveSignInBtn');
+  if(btn)btn.disabled=true;
+  iikoLiveAuthMessage('Выполняю вход в Помогатор…');
+  try{
+    const {data,error}=await sb.auth.signInWithPassword({email,password});
+    if(error)throw error;
+    if(!data?.session)throw Error('Сеанс не создан. Проверьте подтверждение почты.');
+    const note=document.getElementById('guestNote');if(note)note.hidden=true;
+    document.body?.classList?.remove('guest-mode');
+    iikoLiveHideAuth();
+    iikoLiveStatus('Вход выполнен. Подключаюсь к iiko…');
+    // Authentication is the only added step. Do not forget the saved MAIN token.
+    await iikoLiveConnect();
+  }catch(e){
+    iikoLiveAuthMessage('Не удалось войти: '+String(e.message||e),true);
+  }finally{if(btn)btn.disabled=false}
+}
+async function iikoLiveSignUp(){
+  const email=String(document.getElementById('iikoLiveLoginEmail')?.value||'').trim().toLowerCase();
+  const password=String(document.getElementById('iikoLiveLoginPassword')?.value||'');
+  if(!email||password.length<6){iikoLiveAuthMessage('Укажите email и пароль не короче 6 символов.',true);return}
+  const btn=document.getElementById('iikoLiveSignUpBtn');if(btn)btn.disabled=true;
+  try{
+    const {data,error}=await sb.auth.signUp({email,password});
+    if(error)throw error;
+    if(data?.session){
+      document.getElementById('guestNote').hidden=true;
+      iikoLiveHideAuth();
+      await iikoLiveConnect();
+    }else iikoLiveAuthMessage('Аккаунт создан. Подтвердите email по письму, затем нажмите «Войти».');
+  }catch(e){iikoLiveAuthMessage('Не удалось создать аккаунт: '+String(e.message||e),true)}
+  finally{if(btn)btn.disabled=false}
+}
+async function iikoLiveResetPassword(){
+  const email=String(document.getElementById('iikoLiveLoginEmail')?.value||'').trim().toLowerCase();
+  if(!email){iikoLiveAuthMessage('Сначала укажите email, на который отправить восстановление.',true);return}
+  try{
+    const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+    if(error)throw error;
+    iikoLiveAuthMessage('Если такой аккаунт существует, на почту отправлена ссылка для восстановления пароля.');
+  }catch(e){iikoLiveAuthMessage('Не удалось отправить письмо: '+String(e.message||e),true)}
+}
+async function iikoLiveRefreshAuthHint(){
+  const hint=document.getElementById('iikoLiveAuthHint');
+  if(!hint)return;
+  const {data,error}=await sb.auth.getSession();
+  const session=!error?data?.session:null;
+  hint.hidden=Boolean(session);
+  if(session)iikoLiveHideAuth();
+}
 async function iikoLiveCall(action,extra={}){
   if(typeof sb==='undefined')throw Error('Сначала войдите в Помогатор.');
   const session=await sb.auth.getSession();
   const jwt=session?.data?.session?.access_token;
   const main=typeof planGuestStored==='function'?planGuestStored():null;
-  if(!jwt)throw Error('Войдите в аккаунт Помогатора.');
+  if(!jwt){iikoLiveShowAuth();throw Error('На компьютере Иры гостевой режим. Войдите в аккаунт Помогатора через форму ниже. Код MAIN вводить повторно не нужно.');}
   if(!main?.deviceId||!main?.token)throw Error('Подключите MAIN с сохранённым 32-символьным кодом.');
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),90000);
@@ -142,4 +215,7 @@ async function iikoLiveSend(which){
     iikoLiveStatus('Акт '+which+': '+error+' Автоматическая повторная отправка отключена.',true);
   }finally{iikoLiveState.busy=false;iikoLiveRenderReceipts();iikoLiveRefreshButtons()}
 }
-document.addEventListener('DOMContentLoaded',()=>iikoLiveRefreshButtons());
+document.addEventListener('DOMContentLoaded',()=>{
+  iikoLiveRefreshButtons();
+  iikoLiveRefreshAuthHint().catch(e=>console.warn('Auth state unavailable',e));
+});
