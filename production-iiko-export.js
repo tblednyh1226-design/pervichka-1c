@@ -16,6 +16,7 @@ function iikoDraftInvalidate(reason){
   iikoDraftState.ready=false;iikoDraftState.documents=[];iikoDraftState.issues=[];iikoDraftState.mismatches=[];
   const btn=document.getElementById('iikoDraftDownload');
   if(btn)btn.disabled=true;
+  if(typeof iikoLiveRefreshButtons==='function')iikoLiveRefreshButtons();
   const mismatchesBtn=document.getElementById('iikoDraftMismatchDownload');
   if(mismatchesBtn)mismatchesBtn.disabled=true;
   const msg=document.getElementById('iikoDraftStatus');
@@ -312,6 +313,7 @@ function iikoDraftCheck(){
     if(btn)btn.disabled=!iikoDraftState.ready;
     const mismatchBtn=document.getElementById('iikoDraftMismatchDownload');
     if(mismatchBtn)mismatchBtn.disabled=!missing;
+    if(typeof iikoLiveRefreshButtons==='function')iikoLiveRefreshButtons();
     return data;
   }catch(e){
     const el=document.getElementById('iikoDraftStatus');
