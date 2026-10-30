@@ -13,6 +13,11 @@ async function productionOpen(){
  const f=document.getElementById('prodfile').files[0];if(!f)return;
  try{
   document.getElementById('prodstatus').textContent='Читаю Excel…';
+  // A new import attempt replaces the previous plan, even if the new file is damaged.
+  // Never leave old acts ready for download after a failed replacement.
+  productionBook=null;
+  if(typeof morningState!=='undefined'){morningState.book=null;morningState.result=null;}
+  if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Читаю новый Excel. Предыдущие акты сняты с подготовки.');
   if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
   const bytes=await f.arrayBuffer();
   productionBook=XLSX.read(bytes,{type:'array',cellDates:true,cellStyles:true});productionFileName=f.name;

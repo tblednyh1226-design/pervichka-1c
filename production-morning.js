@@ -58,6 +58,7 @@ function morningBuildSelectedDate() {
     morningPrintResult();
   }catch(e){
     if(status)status.textContent='Не удалось подготовить акты: '+(e.message||e);
+    if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Акты не подготовлены: '+(e.message||e)+'. Сверка iiko не выполнена.');
   }
 }
 document.addEventListener('DOMContentLoaded',morningInitDate);
@@ -223,6 +224,7 @@ function morningPrintResult(){
   const warnings=r.warnings.length?'<p style="color:#9d4b17"><b>Проверить:</b> '+r.warnings.map(morningEscape).join('; ')+'</p>':'';
   area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Крайний правый итоговый столбец: <b>'+morningEscape(r.selected.label)+'</b>.</p>'+warnings+cards;
   status.textContent='Предпросмотр готов. Это НЕ документы iiko. Никаких перемещений, расходных и проведения.';
+  if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
 }
 function morningPrepareBook(book,name){
   morningState.book=book;morningState.fileName=name||'План производства.xlsx';
@@ -243,7 +245,7 @@ function morningRetryColumn(){
     if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Изменён столбец Excel. Повтори проверку iiko.');
     morningState.result=morningAnalyze(morningState.book,morningSelectedDate(),Number(value));
     morningPrintResult();
-    document.getElementById('morningStatus').textContent='Столбец выбран вручную для проверки. Не отправляйте акты в iiko до сверки.';
+    document.getElementById('morningStatus').textContent='Столбец выбран. Номенклатура проверена автоматически, если справочник iiko загружен.';
   }catch(e){document.getElementById('morningStatus').textContent='Ошибка: '+(e.message||e)}
 }
 function morningExportPreview(){
