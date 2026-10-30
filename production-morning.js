@@ -33,6 +33,7 @@ function morningSelectedDate() {
   return morningDateFromISO(document.getElementById('morningDateInput')?.value);
 }
 function morningDateChanged() {
+  if(morningState.book)morningSyncSheetPicker();
   if(!morningState.book){
     const status=document.getElementById('morningStatus');
     if(status)status.textContent='Дата выбрана. Получите план с MAIN или загрузите Excel ниже.';
@@ -56,6 +57,7 @@ function morningBuildSelectedDate() {
     if(status)status.textContent='Ищу лист за '+date.day+'.'+date.month+'.'+date.year+' и крайний правый итоговый столбец…';
     morningState.result=morningAnalyze(morningState.book,date,null);
     morningPrintResult();
+    morningSyncSheetPicker();
   }catch(e){
     if(status)status.textContent='Не удалось подготовить акты: '+(e.message||e);
     if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Акты не подготовлены: '+(e.message||e)+'. Сверка iiko не выполнена.');
@@ -65,13 +67,62 @@ document.addEventListener('DOMContentLoaded',morningInitDate);
 
 function morningMatchSheet(name,date){
   const s=String(name);
-  const pattern=new RegExp('(^|\\D)'+Number(date.day)+'\\s*[.\\/-]\\s*'+Number(date.month)+'(?:\\s*[.\\/-]\\s*(\\d{2,4}))?(?!\\d)','g');
+  const day=Number(date.day),month=Number(date.month);
+  // Excel tabs can be "02.11Пн" or "2.11Пн": preserve optional leading zero.
+  const d=day<10?'0?'+day:String(day);
+  const mth=month<10?'0?'+month:String(month);
+  const pattern=new RegExp('(^|\\D)'+d+'\\s*[.\\/-]\\s*'+mth+
+    '(?:\\s*[.\\/-]\\s*(\\d{2,4}))?(?!\\d)','g');
   let m;
   while((m=pattern.exec(s))){
     const yr=m[2];
     if(!yr||Number(yr)===Number(date.year)||Number(yr)===Number(date.year.slice(-2)))return true;
   }
   return false;
+}
+function morningParseSheetDate(sheet){
+  // Selectable date tabs: "02.11Пн", "2.11 Пн", "02.11.2026" etc.
+  const m=/^\s*(0?[1-9]|[12]\d|3[01])\s*[.\/-]\s*(0?[1-9]|1[0-2])(?:(?:\s*[.\/-]\s*)(\d{2,4}))?(?!\d)/.exec(String(sheet));
+  if(!m)return null;
+  const day=Number(m[1]),month=Number(m[2]);
+  const y=m[3]?Number(m[3]):null;
+  const year=y===null?null:y<100?2000+y:y;
+  const check=new Date(Date.UTC(year||2026,month-1,day));
+  if(check.getUTCDate()!==day||check.getUTCMonth()+1!==month)return null;
+  return {day,month,year};
+}
+function morningSyncSheetPicker(){
+  const picker=document.getElementById('morningSheetSelect');
+  if(!picker)return;
+  const names=morningState.book?.SheetNames||[];
+  const choices=names.filter(n=>morningParseSheetDate(n));
+  if(!choices.length){
+    picker.innerHTML='<option value="">Сначала загрузите план Excel</option>';
+    picker.disabled=true;
+    return;
+  }
+  picker.disabled=false;
+  picker.innerHTML='<option value="">Выберите вкладку Excel</option>'+choices.map(n=>
+    '<option value="'+morningEscape(n)+'">'+morningEscape(n)+'</option>').join('');
+  const date=morningSelectedDate();
+  const matches=choices.filter(n=>morningMatchSheet(n,date));
+  picker.value=matches.length===1?matches[0]:'';
+}
+function morningSelectSheet(){
+  const picker=document.getElementById('morningSheetSelect');
+  if(!picker?.value)return;
+  const entry=morningParseSheetDate(picker.value);
+  if(!entry)return;
+  const dateInput=document.getElementById('morningDateInput');
+  let selectedYear=Number(String(dateInput?.value||'').slice(0,4));
+  if(!Number.isInteger(selectedYear)||selectedYear<2000||selectedYear>2100){
+    selectedYear=Number(morningTomorrowMoscow().year);
+  }
+  const year=entry.year||selectedYear;
+  const iso=String(year)+'-'+String(entry.month).padStart(2,'0')+'-'+String(entry.day).padStart(2,'0');
+  morningDateFromISO(iso); // Reject invalid calendar date without changing input.
+  if(dateInput)dateInput.value=iso;
+  morningBuildSelectedDate();
 }
 function morningRgb(color){
   if(!color||typeof color.rgb!=='string')return null;
@@ -98,7 +149,7 @@ function morningNumber(v){
 }
 function morningDateBook(book,date){
   const names=book.SheetNames.filter(n=>morningMatchSheet(n,date));
-  if(!names.length)throw Error('Нет вкладки с датой '+date.day+'.'+date.month+'.'+date.year+'. Вкладки: '+book.SheetNames.join(', '));
+  if(!names.length)throw Error('Нет вкладки с датой '+date.day+'.'+date.month+'.'+date.year+'. Выберите дату из списка вкладок Excel ниже.');
   if(names.length!==1)throw Error('Найдено несколько вкладок на '+date.day+'.'+date.month+': '+names.join(', ')+'. Нужно уточнить дату.');
   return names[0];
 }
@@ -242,6 +293,7 @@ function morningPrintResult(){
 }
 function morningPrepareBook(book,name,bytes=null){
   morningState.book=book;morningState.bytes=bytes;morningState.fileName=name||'План производства.xlsx';
+  morningSyncSheetPicker();
   if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Загружен другой Excel. Проверь акты перед выгрузкой.');
   morningState.result=null;morningState.selectedColumn=null;
   morningBuildSelectedDate();
