@@ -15,8 +15,8 @@ async function productionOpen(){
   document.getElementById('prodstatus').textContent='Читаю Excel…';
   if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
   const bytes=await f.arrayBuffer();
-  productionBook=XLSX.read(bytes,{type:'array',cellDates:true});productionFileName=f.name;
-  if(typeof morningPrepareFromBytes==='function')morningPrepareFromBytes(bytes,f.name);
+  productionBook=XLSX.read(bytes,{type:'array',cellDates:true,cellStyles:true});productionFileName=f.name;
+  if(typeof morningPrepareBook==='function')morningPrepareBook(productionBook,f.name);
   document.getElementById('prodsheet').innerHTML=productionBook.SheetNames.map((name,i)=>'<option value="'+i+'">'+productionText(name)+'</option>').join('');
   document.getElementById('prodsheet').value=String(productionBook.SheetNames.length-1);
   productionSelectSheet();
