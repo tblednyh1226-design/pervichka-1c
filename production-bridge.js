@@ -50,7 +50,20 @@ async function planGuestFetch(action,extra={},isClaim=false){
     headers['x-device-id']=deviceId;
     headers['x-browser-token']=token;
   }
-  const rsp=await fetch(planGuestApi,{method:'POST',headers,body:JSON.stringify({action,...extra}),cache:'no-store'});
+  // The request API must never leave the UI stuck indefinitely on "Отправляю запрос".
+  const timeoutMs=action==='request'?12000:20000;
+  const controller=new AbortController();
+  const timeoutId=setTimeout(()=>controller.abort(),timeoutMs);
+  let rsp;
+  try{
+    rsp=await fetch(planGuestApi,{
+      method:'POST',headers,body:JSON.stringify({action,...extra}),
+      cache:'no-store',signal:controller.signal
+    });
+  }catch(e){
+    if(e?.name==='AbortError')throw new Error('Сервер не ответил за '+(timeoutMs/1000)+' секунд. MAIN мог уже получить задание. Нажми «Открыть последний готовый файл», чтобы проверить результат без повторного запроса.');
+    throw e;
+  }finally{clearTimeout(timeoutId)}
   const json=await rsp.json().catch(()=>({ok:false,error:'Ошибка ответа сервера'}));
   if(!rsp.ok||!json.ok)throw new Error(json.error||('Ошибка сервера '+rsp.status));
   return json;
@@ -135,6 +148,42 @@ function planBridgeDownload() {
   a.href=url;a.download=planBridgeFileName;document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
+async function planBridgeImportDownload(url,label){
+  if(!url)throw Error('Сервер не предоставил адрес Excel.');
+  planBridgeStatus('Скачиваю Excel с сервера…');
+  const response=await fetch(url,{cache:'no-store'});
+  if(!response.ok)throw Error('Не удалось скачать Excel: HTTP '+response.status);
+  planBridgeBytes=await response.arrayBuffer();
+  planBridgeFileName='ПЛАН ПРОИЗВОДСТВА.xlsx';
+  const download=document.getElementById('planBridgeDownloadBtn');
+  if(download)download.hidden=false;
+  planBridgeStatus('Excel скачан ('+(planBridgeBytes.byteLength/1048576).toFixed(1)+' МБ). Открываю выбранный день…');
+  await new Promise(resolve=>setTimeout(resolve,0));
+  planBridgePreview(planBridgeBytes);
+  planBridgeStatus(label+' В iiko ничего не передавалось.');
+}
+async function planBridgeLoadLatest(){
+  if(planBridgeBusy)return;
+  planBridgeBusy=true;
+  const btn=document.getElementById('planBridgeLatestBtn');
+  if(btn)btn.disabled=true;
+  planBridgeBytes=null;
+  if(typeof morningState!=='undefined'){morningState.book=null;morningState.bytes=null;morningState.result=null;}
+  if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Загружаю последний готовый Excel. Предыдущие акты сняты с подготовки.');
+  const download=document.getElementById('planBridgeDownloadBtn');
+  if(download)download.hidden=true;
+  const preview=document.getElementById('planBridgePreview');
+  if(preview)preview.textContent='';
+  try{
+    planBridgeStatus('Ищу последний готовый файл на сервере. Новый запрос к MAIN не создаю…');
+    const latest=await planBridgeCall('latest');
+    if(!latest.available)throw Error('На сервере пока нет готового файла от MAIN.');
+    const finished=latest.finished_at?new Date(latest.finished_at)
+      .toLocaleString('ru-RU',{timeZone:'Europe/Moscow',hour12:false}):'время не указано';
+    await planBridgeImportDownload(latest.download_url,'Открыт последний готовый файл MAIN от '+finished+' (Москва).');
+  }catch(e){planBridgeStatus('Ошибка получения готового файла: '+(e.message||e),true)}
+  finally{planBridgeBusy=false;if(btn)btn.disabled=false;}
+}
 async function planBridgeRequest() {
   if(planBridgeBusy)return;
   planBridgeBusy=true;
@@ -147,26 +196,18 @@ async function planBridgeRequest() {
   document.getElementById('planBridgeDownloadBtn').hidden=true;
   document.getElementById('planBridgePreview').textContent='';
   try {
-    planBridgeStatus('Отправляю запрос на компьютер MAIN…');
+    planBridgeStatus('Создаю задание на сервере (ответ до 12 секунд)…');
     const job=await planBridgeCall('request');
+    planBridgeStatus('Задание создано. Жду выполнения на MAIN…');
     for(let attempt=0;attempt<35;attempt++){
       const r=await planBridgeCall('status',{job_id:job.job_id});
       if(r.status==='failed')throw new Error('MAIN: '+(r.error||'Ошибка чтения файла'));
-      if(r.status==='completed') {
-        planBridgeStatus('Файл получен. Проверяю содержимое Excel…');
-        const response=await fetch(r.download_url,{cache:'no-store'});
-        if(!response.ok)throw new Error('Не удалось скачать полученный Excel');
-        planBridgeBytes=await response.arrayBuffer();
-        planBridgeFileName='ПЛАН ПРОИЗВОДСТВА.xlsx';
-        document.getElementById('planBridgeDownloadBtn').hidden=false;
-        planBridgeStatus('Excel скачан ('+(planBridgeBytes.byteLength/1048576).toFixed(1)+' МБ). Открываю только выбранный день…');
-        await new Promise(resolve=>setTimeout(resolve,0)); // Paint progress before synchronous XLSX parsing.
-        planBridgePreview(planBridgeBytes);
-        planBridgeStatus('Готово: исходный Excel получен с MAIN. В iiko ничего не передавалось.');
+      if(r.status==='completed'){
+        await planBridgeImportDownload(r.download_url,'Готово: свежий Excel получен с MAIN.');
         await planBridgeDeviceStatus();
         return;
       }
-      planBridgeStatus(r.status==='processing'?'MAIN читает и передаёт Excel…':'Ожидаю ответа MAIN…');
+      planBridgeStatus(r.status==='processing'?'MAIN читает и передаёт Excel…':'Задание в очереди MAIN. Жду ответа…');
       await new Promise(resolve=>setTimeout(resolve,2000));
     }
     throw new Error('MAIN не ответил за время проверки. Попробуй позже; запрос остался в очереди.');
