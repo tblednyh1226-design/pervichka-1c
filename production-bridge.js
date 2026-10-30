@@ -81,6 +81,7 @@ async function planBridgePair(){
     if(el){el.value=token;el.type='password';}
     planBridgeRefreshSavedCode();
     planBridgeStatus('MAIN подключён. Код сохранён на этом устройстве и восстановится при следующем открытии Помогатора.');
+    if(typeof iikoDraftLoadMappings==='function')await iikoDraftLoadMappings();
     await planBridgeDeviceStatus();
   }catch(e){planBridgeStatus('Ошибка подключения: '+(e.message||e),true)}
 }
@@ -92,6 +93,7 @@ function planBridgeDisconnect(){
   const codeInput=document.getElementById('planBridgeCodeInput');
   if(codeInput){codeInput.value='';codeInput.type='password';}
   planBridgeRefreshSavedCode();
+  if(typeof iikoDraftLoadMappings==='function')iikoDraftLoadMappings();
   const download=document.getElementById('planBridgeDownloadBtn');
   if(download)download.hidden=true;
   const preview=document.getElementById('planBridgePreview');if(preview)preview.textContent='';
