@@ -5,9 +5,9 @@ const iikoDraftState={catalog:new Map(),catalogList:[],catalogCount:0,documents:
 function iikoDraftNorm(s){return String(s??'').toLowerCase().replace(/ё/g,'е').replace(/["«»]/g,'').replace(/\s+/g,' ').trim()}
 // Composition in parentheses is not part of the product name. Preserve the full
 // original plan name for reports and the source Excel.
-function iikoDraftPrefix(s){return String(s??'').split(/[（(]/,1)[0].replace(/\\s+/g,' ').trim()}
+function iikoDraftPrefix(s){return String(s??'').split(/[（(]/,1)[0].replace(/\s+/g,' ').trim()}
 function iikoDraftSourceKey(s){return iikoDraftNorm(iikoDraftPrefix(s))}
-function iikoDraftExact(s){return String(s??'').trim().replace(/\\s+/g,' ')}
+function iikoDraftExact(s){return String(s??'').trim().replace(/\s+/g,' ')}
 function iikoDraftEsc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]))}
 function iikoDraftHtml(s){return iikoDraftEsc(s).replace(/&apos;/g,'&#39;')}
 function iikoDraftOnlyPositive(items){return (items||[]).filter(x=>Number.isFinite(Number(x.quantity))&&Number(x.quantity)>0)}
@@ -59,6 +59,126 @@ async function iikoDraftLoadCatalog(){
     iikoDraftAutoCheck();
   }catch(e){iikoDraftInvalidate('Ошибка справочника iiko: '+(e.message||e))}
 }
+
+async function iikoDraftLoadMappings(){
+  const device=typeof planGuestStored==='function'?planGuestStored():{deviceId:'',token:''};
+  iikoDraftState.mappingDevice=device.deviceId||'';
+  iikoDraftState.mappings=new Map();
+  iikoDraftState.mappingLoaded=false;
+  if(!device.deviceId||!device.token){
+    iikoDraftState.mappingError='Чтобы сохранять общие соответствия, подключите MAIN с 32-символьным кодом.';
+    iikoDraftState.mappingLoaded=true;
+    iikoDraftRenderSaved();
+    iikoDraftAutoCheck();
+    return;
+  }
+  iikoDraftState.mappingLoading=true;
+  iikoDraftState.mappingError='';
+  iikoDraftInvalidate('Загружаю общие сохранённые соответствия iiko…');
+  try{
+    const response=await planGuestFetch('iiko_map_list');
+    // Do not attach mappings from the previous MAIN after reconnecting to another device.
+    const now=planGuestStored();
+    if(now.deviceId!==device.deviceId)return;
+    for(const row of response.mappings||[]){
+      if(!row.source_key||!(row.target_id||row.target_article))continue;
+      iikoDraftState.mappings.set(row.source_key,row);
+    }
+    iikoDraftState.mappingLoaded=true;
+  }catch(e){
+    iikoDraftState.mappingError='Не удалось загрузить сохранённые соответствия: '+String(e.message||e);
+  }finally{
+    iikoDraftState.mappingLoading=false;
+    iikoDraftRenderSaved();
+    iikoDraftAutoCheck();
+  }
+}
+function iikoDraftRenderSaved(){
+  const el=document.getElementById('iikoDraftSavedMappings');
+  if(!el)return;
+  iikoDraftState.mappingRows=[...iikoDraftState.mappings.entries()];
+  const rows=iikoDraftState.mappingRows.map(([key,p],i)=>
+    '<tr><td>'+iikoDraftHtml(key)+'</td><td>'+iikoDraftHtml(p.target_name)+
+    '</td><td>'+iikoDraftHtml(p.target_article||p.target_id||'')+
+    '</td><td><button onclick="iikoDraftDeleteMapping('+i+')">Удалить</button></td></tr>').join('');
+  el.innerHTML='<details><summary>Запомненные соответствия ('+
+    iikoDraftState.mappings.size+')</summary>'+
+    (iikoDraftState.mappingError?'<p>'+iikoDraftHtml(iikoDraftState.mappingError)+'</p>':'')+
+    (rows?'<div class="tablewrap"><table class="nomtable"><thead><tr><th>Название в плане (до скобок)</th><th>Номенклатура iiko</th><th>Артикул / ID</th><th></th></tr></thead><tbody>'+
+      rows+'</tbody></table></div>':'<p>Пока нет вручную подтверждённых соответствий.</p>')+
+    '</details>';
+}
+function iikoDraftFilterChoices(index){
+  const selected=iikoDraftState.mismatches[index];
+  const input=document.getElementById('iikoDraftFind-'+index);
+  const picker=document.getElementById('iikoDraftChoose-'+index);
+  if(!selected?.canMap||!picker)return;
+  const query=iikoDraftNorm(input?.value||'');
+  const matches=[];
+  for(let i=0;i<iikoDraftState.catalogList.length;i++){
+    const p=iikoDraftState.catalogList[i];
+    if(!query||iikoDraftNorm(p.name).includes(query)||
+       iikoDraftNorm(p.article).includes(query)){
+      matches.push([i,p]);
+      if(matches.length===70)break;
+    }
+  }
+  picker.innerHTML='<option value="">Выберите номенклатуру iiko</option>'+
+    matches.map(([index,p])=>'<option value="'+index+'">'+
+      iikoDraftHtml(p.name)+' · '+iikoDraftHtml(p.article||p.id||'')+'</option>').join('');
+}
+async function iikoDraftSaveChoice(index){
+  const issue=iikoDraftState.mismatches[index];
+  const select=document.getElementById('iikoDraftChoose-'+index);
+  const value=String(select?.value||'');
+  const product=value!==''?iikoDraftState.catalogList[Number(value)]:null;
+  const status=document.getElementById('iikoDraftStatus');
+  if(!issue?.canMap||!product){
+    if(status)status.textContent='Выберите конкретную позицию iiko из списка.';
+    return;
+  }
+  const key=iikoDraftSourceKey(issue.name);
+  if(!key||key.length>300){if(status)status.textContent='Название для сопоставления некорректно.';return}
+  const pair=typeof planGuestStored==='function'?planGuestStored():null;
+  if(!pair?.deviceId||!pair?.token){
+    if(status)status.textContent='Чтобы запомнить выбор на всех устройствах, сначала подключите MAIN.';
+    return;
+  }
+  if(!iikoDraftState.mappingLoaded){
+    if(status)status.textContent='Общий справочник соответствий пока не загружен.';
+    return;
+  }
+  if(status)status.textContent='Сохраняю соответствие в общем справочнике…';
+  try{
+    await planGuestFetch('iiko_map_save',{
+      source_key:key,target_name:product.name,target_id:product.id||'',target_article:product.article||''
+    });
+    iikoDraftState.mappings.set(key,{source_key:key,target_name:product.name,
+      target_id:product.id||'',target_article:product.article||''});
+    iikoDraftRenderSaved();
+    iikoDraftCheck();
+  }catch(e){
+    if(status)status.textContent='Не удалось сохранить соответствие: '+String(e.message||e);
+  }
+}
+async function iikoDraftDeleteMapping(index){
+  const item=iikoDraftState.mappingRows[index];
+  if(!item)return;
+  const [key,row]=item;
+  if(!window.confirm('Удалить соответствие «'+key+'» → «'+row.target_name+'»?'))return;
+  try{
+    await planGuestFetch('iiko_map_delete',{source_key:key});
+    iikoDraftState.mappings.delete(key);
+    iikoDraftRenderSaved();
+    iikoDraftAutoCheck();
+  }catch(e){
+    const status=document.getElementById('iikoDraftStatus');
+    if(status)status.textContent='Не удалось удалить соответствие: '+String(e.message||e);
+  }
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  if(typeof planGuestStored==='function')iikoDraftLoadMappings();
+});
 function iikoDraftStore(which,end){
   const id='iikoDraft'+which+(end==='from'?'From':'To');
   return String(document.getElementById(id)?.value||'').trim();
@@ -73,7 +193,7 @@ function iikoDraftItem(item){
   const saved=iikoDraftState.mappings.get(key);
   if(saved){
     const options=iikoDraftState.catalogList.filter(p=>
-      saved.target_id?p.id===saved.target_id:(!p.id && p.article===saved.target_article));
+      saved.target_id?p.id===saved.target_id:p.article===saved.target_article);
     const unique=new Map(options.map(p=>[(p.id||'article:'+p.article),p]));
     if(unique.size===1)return iikoDraftMatchedItem(item,[...unique.values()][0]);
     return {error:'Сохранённое соответствие отсутствует или неоднозначно в текущем справочнике iiko'};
