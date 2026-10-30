@@ -320,10 +320,65 @@ function morningRetryColumn(){
 }
 function morningExportPreview(){
   const r=morningState.result;
-  if(!r||r.needsColumn)return;
-  const data={schema:'pomogator.morning-preview.v1',sourceFile:morningState.fileName,sourceSheet:r.sheet,sourceColumn:r.selected.label,createdAt:new Date().toISOString(),notSentToIiko:true,documents:r.documents,warnings:r.warnings};
-  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json;charset=utf-8'});
-  const url=URL.createObjectURL(blob),a=document.createElement('a');
-  a.href=url;a.download='prigotovlenie-'+r.date.iso+'-proverka.json';document.body.appendChild(a);a.click();a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),10000);
+  if(!r||r.needsColumn||!Array.isArray(r.documents)||r.documents.length!==2){
+    const status=document.getElementById('morningStatus');
+    if(status)status.textContent='Сначала сформируйте два акта приготовления за выбранную дату.';
+    return;
+  }
+  if(typeof XLSX==='undefined'||!XLSX.utils?.aoa_to_sheet||!XLSX.writeFile){
+    const status=document.getElementById('morningStatus');
+    if(status)status.textContent='Не загружен модуль Excel. Обновите страницу и повторите скачивание.';
+    return;
+  }
+  const book=XLSX.utils.book_new();
+  const palette={header:'155EEF',light:'EAF2FF',dark:'101828',muted:'667085',border:'D0D5DD'};
+  for(let i=0;i<r.documents.length;i++){
+    const doc=r.documents[i];
+    const name=i===0?'Бухара кухня':'Правда кухня';
+    const items=doc.items||[];
+    const total=items.reduce((sum,item)=>sum+Number(item.quantity||0),0);
+    const rows=[
+      ['АКТ ПРИГОТОВЛЕНИЯ — '+name,''],
+      ['Дата приготовления',r.date.iso],
+      ['Вкладка плана',r.sheet],
+      ['Итоговый столбец',r.selected.label],
+      ['Статус','Для проверки, в iiko не отправлено'],
+      ['Блюдо','Количество'],
+      ...items.map(item=>[String(item.name||''),Number(item.quantity)||0]),
+      ['ИТОГО',total]
+    ];
+    const sheet=XLSX.utils.aoa_to_sheet(rows);
+    sheet['!cols']=[{wch:56},{wch:25}];
+    sheet['!rows']=[{hpt:30},{hpt:22},{hpt:22},{hpt:22},{hpt:22},{hpt:26}];
+    sheet['!merges']=[{s:{r:0,c:0},e:{r:0,c:1}}];
+    sheet['!autofilter']={ref:'A6:B'+(items.length+6)};
+    for(let row=0;row<rows.length;row++){
+      for(let col=0;col<2;col++){
+        const ref=XLSX.utils.encode_cell({r:row,c:col});
+        const cell=sheet[ref];if(!cell)continue;
+        if(row===0)cell.s={font:{bold:true,color:{rgb:'FFFFFF'},sz:15},fill:{fgColor:{rgb:palette.header}},alignment:{vertical:'center'}};
+        else if(row===5)cell.s={font:{bold:true,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:palette.header}},alignment:{vertical:'center'},border:{bottom:{style:'thin',color:{rgb:palette.border}}}};
+        else if(row===rows.length-1)cell.s={font:{bold:true,color:{rgb:palette.dark}},fill:{fgColor:{rgb:palette.light}},border:{top:{style:'thin',color:{rgb:palette.border}}}};
+        else if(row>=6)cell.s={font:{color:{rgb:palette.dark}},alignment:{vertical:'center',wrapText:true},border:{bottom:{style:'hair',color:{rgb:'E5E7EB'}}}};
+        else cell.s={font:{color:{rgb:col===0?palette.muted:palette.dark},bold:col===0},alignment:{vertical:'center',wrapText:col===1}};
+        if(col===1&&row>=6&&typeof cell.v==='number')cell.z='0.##';
+      }
+    }
+    XLSX.utils.book_append_sheet(book,sheet,name);
+  }
+  if((r.warnings||[]).length){
+    const rows=[['ЗАМЕЧАНИЯ К ПЛАНУ'],['Дата приготовления',r.date.iso],['Лист Excel',r.sheet],['Причина для проверки'],...r.warnings.map(x=>[String(x)])];
+    const notes=XLSX.utils.aoa_to_sheet(rows);
+    notes['!cols']=[{wch:105},{wch:24}];
+    notes['!merges']=[{s:{r:0,c:0},e:{r:0,c:1}}];
+    for(let row=0;row<rows.length;row++){
+      const cell=notes['A'+(row+1)];if(!cell)continue;
+      cell.s=row===0?{font:{bold:true,color:{rgb:'FFFFFF'},sz:14},fill:{fgColor:{rgb:palette.header}}}:
+        {alignment:{vertical:'top',wrapText:true},font:{color:{rgb:palette.dark}}};
+    }
+    notes['!rows']=rows.map((_,i)=>({hpt:i>=4?50:24}));
+    XLSX.utils.book_append_sheet(book,notes,'Замечания');
+  }
+  const filename='Акты приготовления '+r.date.iso+' БК и ПК.xlsx';
+  XLSX.writeFile(book,filename,{bookType:'xlsx',compression:true});
 }
