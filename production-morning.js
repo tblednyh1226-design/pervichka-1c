@@ -82,7 +82,7 @@ function morningMatchSheet(name,date){
 }
 function morningParseSheetDate(sheet){
   // Selectable date tabs: "02.11Пн", "2.11 Пн", "02.11.2026" etc.
-  const m=/^\\s*(0?[1-9]|[12]\\d|3[01])\\s*[.\\/-]\\s*(0?[1-9]|1[0-2])(?:(?:\\s*[.\\/-]\\s*)(\\d{2,4}))?(?!\\d)/.exec(String(sheet));
+  const m=/^\s*(0?[1-9]|[12]\d|3[01])\s*[.\/-]\s*(0?[1-9]|1[0-2])(?:(?:\s*[.\/-]\s*)(\d{2,4}))?(?!\d)/.exec(String(sheet));
   if(!m)return null;
   const day=Number(m[1]),month=Number(m[2]);
   const y=m[3]?Number(m[3]):null;
