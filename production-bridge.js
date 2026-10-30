@@ -167,6 +167,13 @@ async function planBridgeLoadLatest(){
   planBridgeBusy=true;
   const btn=document.getElementById('planBridgeLatestBtn');
   if(btn)btn.disabled=true;
+  planBridgeBytes=null;
+  if(typeof morningState!=='undefined'){morningState.book=null;morningState.bytes=null;morningState.result=null;}
+  if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Загружаю последний готовый Excel. Предыдущие акты сняты с подготовки.');
+  const download=document.getElementById('planBridgeDownloadBtn');
+  if(download)download.hidden=true;
+  const preview=document.getElementById('planBridgePreview');
+  if(preview)preview.textContent='';
   try{
     planBridgeStatus('Ищу последний готовый файл на сервере. Новый запрос к MAIN не создаю…');
     const latest=await planBridgeCall('latest');
