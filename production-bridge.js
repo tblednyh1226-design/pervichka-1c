@@ -70,8 +70,8 @@ async function planBridgeDeviceStatus() {
 }
 function planBridgePreview(arraybuffer) {
   if(typeof XLSX==='undefined')throw new Error('Модуль Excel не загружен');
-  const book=XLSX.read(arraybuffer,{type:'array',cellStyles:true,cellDates:true});
-  if(typeof morningPrepareBook==='function')morningPrepareBook(book,'План производства с MAIN');
+  // The 8 MB plan contains 75+ tabs. Parse only the chosen day, not every sheet.
+  const book=morningPrepareFromBytes(arraybuffer,'План производства с MAIN');
   const target=typeof morningSelectedDate==='function'?morningSelectedDate():morningTomorrowMoscow();
   const el=document.getElementById('planBridgePreview');
   const formatted=target.day+'.'+target.month+'.'+target.year;
@@ -107,7 +107,7 @@ async function planBridgeRequest() {
   if(btn)btn.disabled=true;
   planBridgeBytes=null;
   // A fresh MAIN request replaces the old plan; do not keep previous acts exportable if it fails.
-  if(typeof morningState!=='undefined'){morningState.book=null;morningState.result=null;}
+  if(typeof morningState!=='undefined'){morningState.book=null;morningState.bytes=null;morningState.result=null;}
   if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Запросили новый план с MAIN. Предыдущая проверка снята.');
   document.getElementById('planBridgeDownloadBtn').hidden=true;
   document.getElementById('planBridgePreview').textContent='';
@@ -124,6 +124,8 @@ async function planBridgeRequest() {
         planBridgeBytes=await response.arrayBuffer();
         planBridgeFileName='ПЛАН ПРОИЗВОДСТВА.xlsx';
         document.getElementById('planBridgeDownloadBtn').hidden=false;
+        planBridgeStatus('Excel скачан ('+(planBridgeBytes.byteLength/1048576).toFixed(1)+' МБ). Открываю только выбранный день…');
+        await new Promise(resolve=>setTimeout(resolve,0)); // Paint progress before synchronous XLSX parsing.
         planBridgePreview(planBridgeBytes);
         planBridgeStatus('Готово: исходный Excel получен с MAIN. В iiko ничего не передавалось.');
         await planBridgeDeviceStatus();
