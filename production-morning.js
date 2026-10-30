@@ -58,6 +58,7 @@ function morningBuildSelectedDate() {
     morningPrintResult();
   }catch(e){
     if(status)status.textContent='Не удалось подготовить акты: '+(e.message||e);
+    if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Акты не подготовлены: '+(e.message||e)+'. Сверка iiko не выполнена.');
   }
 }
 document.addEventListener('DOMContentLoaded',morningInitDate);
