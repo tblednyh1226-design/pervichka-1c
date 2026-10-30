@@ -285,15 +285,17 @@ function iikoDraftCheck(){
         '" placeholder="Найти позицию iiko по названию / артикулу" oninput="iikoDraftFilterChoices('+i+')">'+
         '<select id="iikoDraftChoose-'+i+'"><option value="">Выберите iiko</option></select>'+
         '<button onclick="iikoDraftSaveChoice('+i+')">Подтвердить и запомнить</button></div>':'';
-      return '<tr><td>'+iikoDraftHtml(x.kitchen)+'</td><td>'+
-        iikoDraftHtml(data.sourceSheet)+'</td><td>'+x.sourceRow+'</td><td>'+
-        iikoDraftHtml(x.name)+'</td><td>'+iikoDraftHtml(x.prefix)+'</td><td>'+
-        iikoDraftHtml(x.reason)+controls+'</td></tr>';
+      return '<div class="iiko-mapping-card"><div><b>'+iikoDraftHtml(x.name)+
+        '</b></div><div class="muted">Кухня: '+iikoDraftHtml(x.kitchen)+
+        ' · Лист: '+iikoDraftHtml(data.sourceSheet)+' · Строка: '+x.sourceRow+
+        '</div><div>До скобок: <b>'+iikoDraftHtml(x.prefix)+
+        '</b></div><div class="muted">'+iikoDraftHtml(x.reason)+
+        '</div><div class="iiko-mapping-choice">'+controls+'</div></div>';
     }).join('');
     const mismatchHTML=data.mismatches.length?
       '<h4>Требуется сопоставление: '+data.mismatches.length+' строк</h4>'+
       '<p>Сначала сравнивается название до первой скобки (состав игнорируется). Для незнакомых блюд выберите правильную позицию iiko и нажмите «Подтвердить и запомнить». Общие соответствия доступны другим браузерам, подключённым к MAIN.</p>'+
-      '<div class="tablewrap"><table class="nomtable"><thead><tr><th>Кухня</th><th>Лист</th><th>Строка</th><th>Название из плана</th><th>До скобок</th><th>Соответствие iiko</th></tr></thead><tbody>'+rowHTML+'</tbody></table></div>':
+      '<div class="iiko-mapping-list">'+rowHTML+'</div>':
       '<p>Все блюда сопоставлены с текущим справочником iiko (название до скобок или подтверждённое соответствие).</p>';
     const otherHTML=data.issues.length?'<p style="color:#b42318"><b>Другие замечания:</b></p><ul>'+data.issues.map(x=>'<li>'+iikoDraftHtml(x)+'</li>').join('')+'</ul>':'';
     const result=document.getElementById('iikoDraftResult');
