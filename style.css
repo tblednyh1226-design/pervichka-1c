@@ -16,3 +16,9 @@
 /* В гостевом режиме можно работать с Excel без организации и аккаунта. */
 body.guest-mode .context,body.guest-mode .headright{display:none!important}
 #guestNote{margin:0 0 16px}
+
+/* Production act preview: only dish name and quantity; usable on narrow phones. */
+.tablewrap table.morning-acts-table{width:100%;min-width:0;table-layout:fixed}
+.morning-acts-table th:first-child,.morning-acts-table td:first-child{width:auto;white-space:normal;overflow-wrap:anywhere}
+.morning-acts-table th:nth-child(2),.morning-acts-table td:nth-child(2){width:88px;min-width:0;text-align:right;white-space:nowrap}
+.morning-acts-table td:first-child{min-width:0}
