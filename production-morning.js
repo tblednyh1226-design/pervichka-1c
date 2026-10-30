@@ -46,6 +46,7 @@ function morningBuildSelectedDate() {
   const picker=document.getElementById('morningColumnPicker');
   const exportBtn=document.getElementById('morningExportBtn');
   morningState.result=null;
+  if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Дата изменена. Повтори проверку пакета iiko.');
   if(area)area.innerHTML='';
   if(exportBtn)exportBtn.hidden=true;
   if(picker)picker.hidden=true;
@@ -225,6 +226,7 @@ function morningPrintResult(){
 }
 function morningPrepareBook(book,name){
   morningState.book=book;morningState.fileName=name||'План производства.xlsx';
+  if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Загружен другой Excel. Проверь акты перед выгрузкой.');
   morningState.result=null;morningState.selectedColumn=null;
   morningBuildSelectedDate();
 }
@@ -238,6 +240,7 @@ function morningRetryColumn(){
   const value=document.getElementById('morningColumnPicker').value;
   if(value==='')return;
   try{
+    if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Изменён столбец Excel. Повтори проверку iiko.');
     morningState.result=morningAnalyze(morningState.book,morningSelectedDate(),Number(value));
     morningPrintResult();
     document.getElementById('morningStatus').textContent='Столбец выбран вручную для проверки. Не отправляйте акты в iiko до сверки.';
