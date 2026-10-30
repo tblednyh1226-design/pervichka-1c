@@ -1,103 +1,62 @@
 /* Production draft upload to the existing, privately configured iikoServer.
    Each click sends ONE NEW unposted act. No automatic retries or document-number lookups. */
 const IIKO_LIVE_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-drafts';
-const iikoLiveState={busy:false,stores:[],connected:false,receipts:[],submitted:new Set()};
+const iikoLiveState={busy:false,stores:[],connected:false,receipts:[],submitted:new Set(),guestClient:null};
 function iikoLiveStatus(text,isError=false){
   const el=document.getElementById('iikoLiveStatus');
   if(el){el.textContent=text;el.style.color=isError?'#b42318':''}
 }
-// MAIN pairing grants access to the plan. iiko writes additionally require
-// a personal Pomogator session, so guests need an explicit sign-in form.
-function iikoLiveAuthMessage(message,isError=false){
-  const el=document.getElementById('iikoLiveAuthMessage');
-  if(el){el.textContent=message;el.style.color=isError?'#b42318':''}
-}
-function iikoLiveShowAuth(){
-  const card=document.getElementById('iikoLiveAuthCard');
-  if(card)card.hidden=false;
-  iikoLiveAuthMessage('Войдите в аккаунт Помогатора. Код MAIN останется сохранённым.');
-  const input=document.getElementById('iikoLiveLoginEmail');
-  if(input&&typeof input.focus==='function')input.focus();
-}
-function iikoLiveHideAuth(){
-  const card=document.getElementById('iikoLiveAuthCard');
-  if(card)card.hidden=true;
-  const pass=document.getElementById('iikoLiveLoginPassword');
-  if(pass)pass.value='';
-}
-async function iikoLiveSignIn(){
-  const email=String(document.getElementById('iikoLiveLoginEmail')?.value||'').trim().toLowerCase();
-  const password=String(document.getElementById('iikoLiveLoginPassword')?.value||'');
-  if(!email||!password){iikoLiveAuthMessage('Введите электронную почту и пароль.',true);return}
-  const btn=document.getElementById('iikoLiveSignInBtn');
-  if(btn)btn.disabled=true;
-  iikoLiveAuthMessage('Выполняю вход в Помогатор…');
-  try{
-    const {data,error}=await sb.auth.signInWithPassword({email,password});
-    if(error)throw error;
-    if(!data?.session)throw Error('Сеанс не создан. Проверьте подтверждение почты.');
-    const note=document.getElementById('guestNote');if(note)note.hidden=true;
-    document.body?.classList?.remove('guest-mode');
-    iikoLiveHideAuth();
-    iikoLiveStatus('Вход выполнен. Подключаюсь к iiko…');
-    // Authentication is the only added step. Do not forget the saved MAIN token.
-    await iikoLiveConnect();
-  }catch(e){
-    iikoLiveAuthMessage('Не удалось войти: '+String(e.message||e),true);
-  }finally{if(btn)btn.disabled=false}
-}
-async function iikoLiveSignUp(){
-  const email=String(document.getElementById('iikoLiveLoginEmail')?.value||'').trim().toLowerCase();
-  const password=String(document.getElementById('iikoLiveLoginPassword')?.value||'');
-  if(!email||password.length<6){iikoLiveAuthMessage('Укажите email и пароль не короче 6 символов.',true);return}
-  const btn=document.getElementById('iikoLiveSignUpBtn');if(btn)btn.disabled=true;
-  try{
-    const {data,error}=await sb.auth.signUp({email,password});
-    if(error)throw error;
-    if(data?.session){
-      document.getElementById('guestNote').hidden=true;
-      iikoLiveHideAuth();
-      await iikoLiveConnect();
-    }else iikoLiveAuthMessage('Аккаунт создан. Подтвердите email по письму, затем нажмите «Войти».');
-  }catch(e){iikoLiveAuthMessage('Не удалось создать аккаунт: '+String(e.message||e),true)}
-  finally{if(btn)btn.disabled=false}
-}
-async function iikoLiveResetPassword(){
-  const email=String(document.getElementById('iikoLiveLoginEmail')?.value||'').trim().toLowerCase();
-  if(!email){iikoLiveAuthMessage('Сначала укажите email, на который отправить восстановление.',true);return}
-  try{
-    const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
-    if(error)throw error;
-    iikoLiveAuthMessage('Если такой аккаунт существует, на почту отправлена ссылка для восстановления пароля.');
-  }catch(e){iikoLiveAuthMessage('Не удалось отправить письмо: '+String(e.message||e),true)}
-}
-async function iikoLiveRefreshAuthHint(){
-  const hint=document.getElementById('iikoLiveAuthHint');
-  if(!hint)return;
-  const {data,error}=await sb.auth.getSession();
-  const session=!error?data?.session:null;
-  hint.hidden=Boolean(session);
-  if(session)iikoLiveHideAuth();
-}
+// For production planning, the saved 32-character MAIN pairing is mandatory.
+// To satisfy the existing server requirement for a valid Supabase JWT without
+// an email/password prompt, create an anonymous *authenticated* session.
+// This does NOT bypass the server's additional MAIN device-token verification.
 async function iikoLiveCall(action,extra={}){
-  if(typeof sb==='undefined')throw Error('Сначала войдите в Помогатор.');
-  const session=await sb.auth.getSession();
-  const jwt=session?.data?.session?.access_token;
+  if(typeof sb==='undefined')throw Error('Модуль безопасного сеанса не загружен.');
   const main=typeof planGuestStored==='function'?planGuestStored():null;
-  if(!jwt){iikoLiveShowAuth();throw Error('На компьютере Иры гостевой режим. Войдите в аккаунт Помогатора через форму ниже. Код MAIN вводить повторно не нужно.');}
-  if(!main?.deviceId||!main?.token)throw Error('Подключите MAIN с сохранённым 32-символьным кодом.');
+  if(!main?.deviceId||!/^[0-9a-f]{32}$/i.test(String(main.token||'')))
+    throw Error('Подключите MAIN с сохранённым 32-символьным кодом.');
+  // Never sign the entire bookkeeping app into an anonymous account.
+  // A separate in-memory Supabase client holds the iiko-only guest session.
+  const current=await sb.auth.getSession();
+  if(current.error)throw Error('Не удалось проверить сеанс Помогатора: '+current.error.message);
+  let session=current.data?.session;
+  if(!session){
+    if(!iikoLiveState.guestClient){
+      if(typeof supabase==='undefined'||typeof supabase.createClient!=='function')
+        throw Error('Не загружен модуль гостевого доступа.');
+      iikoLiveState.guestClient=supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
+        auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}
+      });
+    }
+    const guestAuth=iikoLiveState.guestClient.auth;
+    const cached=await guestAuth.getSession();
+    session=cached?.data?.session||null;
+    if(!session){
+      iikoLiveStatus('Подключаю гостевой сеанс для работы с iiko без email и пароля…');
+      const result=await guestAuth.signInAnonymously();
+      if(result.error){
+        const disabled=result.error.code==='anonymous_provider_disabled'||
+          /anonymous.*(disabled|not enabled|not allowed)/i.test(result.error.message||'');
+        if(disabled)throw Error('В Supabase отключён гостевой вход. Пробная отправка не выполнялась. Требуется включить безопасный гостевой режим после проверки прав доступа.');
+        throw Error('Не удалось создать гостевой сеанс: '+result.error.message);
+      }
+      session=result.data?.session;
+    }
+  }
+  if(!session?.access_token)throw Error('Сервер не создал действующий гостевой сеанс.');
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),90000);
   try{
     const r=await fetch(IIKO_LIVE_ENDPOINT,{method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json','authorization':'Bearer '+jwt,
+      headers:{'Content-Type':'application/json','authorization':'Bearer '+session.access_token,
         'x-device-id':main.deviceId,'x-browser-token':main.token},
       body:JSON.stringify({action,...extra}),signal:controller.signal});
     const result=await r.json().catch(()=>({ok:false,error:'Сервер iiko вернул ответ неизвестного формата'}));
     if(!r.ok||!result.ok)throw Error(result.error||'Ошибка соединения с iiko (HTTP '+r.status+')');
     return result;
   }catch(e){
-    if(e?.name==='AbortError')throw Error('Неизвестен результат запроса: время ожидания истекло. Не отправляйте тот же акт повторно, пока не выясните результат в iiko.');
+    if(e?.name==='AbortError')
+      throw Error('Неизвестен результат запроса: время ожидания истекло. Не отправляйте тот же акт повторно, пока не выясните результат в iiko.');
     throw e;
   }finally{clearTimeout(timeout)}
 }
@@ -215,7 +174,4 @@ async function iikoLiveSend(which){
     iikoLiveStatus('Акт '+which+': '+error+' Автоматическая повторная отправка отключена.',true);
   }finally{iikoLiveState.busy=false;iikoLiveRenderReceipts();iikoLiveRefreshButtons()}
 }
-document.addEventListener('DOMContentLoaded',()=>{
-  iikoLiveRefreshButtons();
-  iikoLiveRefreshAuthHint().catch(e=>console.warn('Auth state unavailable',e));
-});
+document.addEventListener('DOMContentLoaded',()=>iikoLiveRefreshButtons());
