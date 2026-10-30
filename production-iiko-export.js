@@ -127,6 +127,7 @@ function iikoDraftChoiceScore(product,search){
   if(!q)return 0;
   const title=iikoDraftNorm(product.name),article=iikoDraftNorm(product.article);
   if(article&&article===q)return 12000;
+  if(article&&article.includes(q))return 6500;
   if(title===q)return 11000;
   if(title.startsWith(q))return 9500;
   if(title.includes(q))return 8000;
