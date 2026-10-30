@@ -47,6 +47,7 @@ async function iikoDraftLoadCatalog(){
       const nameCol=h.findIndex(x=>/^(наименование|название|name|product name|номенклатура)$/.test(x));
       const guidCol=h.findIndex(x=>/^(id|uuid|guid|productid|product id|идентификатор|id блюда|id номенклатуры)$/.test(x));
       const articleCol=h.findIndex(x=>/^(артикул|article|productarticle|product article|код iiko)$/.test(x));
+      const typeCol=h.findIndex(x=>/^(тип|тип номенклатуры|type|producttype|product type)$/.test(x));
       if(nameCol<0||(guidCol<0&&articleCol<0))throw Error('В справочнике нужны колонки «Наименование» и «ID/UUID» либо «Артикул».');
       const catalog=new Map();let count=0;
       for(const row of rows.slice(1)){
@@ -55,7 +56,8 @@ async function iikoDraftLoadCatalog(){
         const article=articleCol>=0?String(row[articleCol]||'').trim():'';
         if(!name||(!id&&!article))continue;
         if(id&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))continue;
-        const key=iikoDraftExact(name),val={name,id,article};
+        const type=typeCol>=0?String(row[typeCol]||'').trim().toUpperCase():'';
+        const key=iikoDraftExact(name),val={name,id,article,type};
         if(!catalog.has(key))catalog.set(key,[]);
         const list=catalog.get(key);
         if(!list.some(x=>x.id===id&&x.article===article))list.push(val);
