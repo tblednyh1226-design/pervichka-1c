@@ -217,10 +217,10 @@ function morningLargePieInPieces(name,weight){
   // Original production plan lists large pies as 1000гр.; it may later use "кус."
   // in the unit or name. Never convert ordinary 80гр. пирожки or small pies.
   const dish=morningNorm(name);
-  if(!/^пирог(?:\\s|$)/.test(dish))return false;
+  if(!/^пирог(?:\s|$)/.test(dish))return false;
   const unit=morningNorm(weight);
-  if(/(?:^|[^а-я])кус\\.?(?=$|[^а-я])/.test(dish+' '+unit))return true;
-  const m=/^(\\d+(?:[.,]\\d+)?)\\s*(кг|гр|г)\\.?$/.exec(unit);
+  if(/(?:^|[^а-я])кус\.?(?=$|[^а-я])/.test(dish+' '+unit))return true;
+  const m=/^(\d+(?:[.,]\d+)?)\s*(кг|гр|г)\.?$/.exec(unit);
   if(!m)return false;
   const grams=Number(m[1].replace(',','.'))*(m[2]==='кг'?1000:1);
   return grams>=900;
