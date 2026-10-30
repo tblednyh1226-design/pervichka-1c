@@ -54,7 +54,7 @@ function morningBuildSelectedDate() {
   try{
     const date=morningSelectedDate();
     if(!morningState.book)throw Error('Сначала получите Excel с MAIN или выберите файл вручную.');
-    if(status)status.textContent='Ищу лист за '+date.day+'.'+date.month+'.'+date.year+' и крайний правый итоговый столбец…';
+    if(status)status.textContent='Ищу лист за '+date.day+'.'+date.month+'.'+date.year+' и столбец iiko…';
     morningState.result=morningAnalyze(morningState.book,date,null);
     morningPrintResult();
     morningSyncSheetPicker();
@@ -164,28 +164,32 @@ function morningGetHeader(rows){
   }
   throw Error('Не найдена строка заголовка «Наименование». Не выбираю блюда по предположению.');
 }
-function morningColumnSummary(ws,rows,header){
+// Quantities come exclusively from the column headed "iiko" on the selected date sheet.
+function morningIikoColumn(ws,rows,header){
   const range=ws['!ref']?XLSX.utils.decode_range(ws['!ref']):null;
-  if(!range)throw Error('Лист Excel пуст');
-  const candidates=[];
-  for(let c=header.nameCol+1;c<=Math.min(range.e.c,170);c++){
-    let numeric=0,blue=0,blueNumbers=0,headerBlue=0;
-    for(let r=Math.max(0,header.row-2);r<Math.min(rows.length,header.row+220);r++){
-      const cell=ws[XLSX.utils.encode_cell({r,c})];
-      const isBlue=morningIsBlue(cell);
-      const qty=morningNumber(rows[r]?.[c]);
-      if(r>header.row&&qty!==null&&qty>0){numeric++;if(isBlue)blueNumbers++}
-      if(isBlue){blue++;if(r<=header.row+1)headerBlue++}
+  if(!range)throw Error('Лист Excel пуст.');
+  const matches=new Map();
+  // Plan headers can span multiple lines. Scan around the header, not throughout dishes.
+  const from=Math.max(0,header.row-6),to=Math.min(rows.length-1,header.row+1);
+  for(let r=from;r<=to;r++){
+    for(let c=range.s.c;c<=range.e.c;c++){
+      const title=morningNorm(rows[r]?.[c]).replace(/[:.]$/,'').trim();
+      if(title==='iiko'&&!matches.has(c)){
+        matches.set(c,{col:c,label:XLSX.utils.encode_col(c),name:'iiko',headerRow:r});
+      }
     }
-    if(!numeric)continue;
-    const name=String(rows[header.row]?.[c]??'').trim();
-    candidates.push({col:c,label:XLSX.utils.encode_col(c),name,numeric,blue,blueNumbers,headerBlue});
   }
-  // The plan's production totals are in the far-right populated quantity column.
-  // The fill may be saved as an Excel theme color, so never rely on blue RGB detection.
-  // Ignore isolated numbers in notes to the right of the production table.
-  const quantityColumns=candidates.filter(c=>c.numeric>=5);
-  return {candidates,rightmost:quantityColumns.length?quantityColumns[quantityColumns.length-1]:null};
+  if(!matches.size)throw Error('На листе не найден столбец «iiko». Количества из других столбцов не используются.');
+  if(matches.size!==1)throw Error('На листе найдено несколько столбцов «iiko»: '+
+    [...matches.values()].map(x=>x.label).join(', ')+'. Оставьте один столбец для выгрузки.');
+  const selected=[...matches.values()][0];
+  selected.numeric=0;
+  for(let r=header.row+1;r<rows.length;r++){
+    const value=morningNumber(rows[r]?.[selected.col]);
+    if(value!==null&&value>0)selected.numeric++;
+  }
+  if(!selected.numeric)throw Error('Столбец «iiko» ('+selected.label+') найден, но в нём нет положительных количеств.');
+  return selected;
 }
 function morningIsGroup(txt){
   return /^(выпечка|кондитерские изделия|холодные закуски|первые блюда|вторые блюда|гарниры|напитки|компоты|десерты|салаты|блюда для завтраков|завтраки|завтрак|дополнительный ассортимент|хлеб|комплексные обеды|комплексный обед|прочее)(\s*[:.]?)$/i.test(morningNorm(txt));
@@ -242,15 +246,14 @@ function morningSheetOnDemand(book,name){
   book.Sheets[name]=worksheet;
   return worksheet;
 }
-function morningAnalyze(book,date,overrideColumn){
+function morningAnalyze(book,date){
   if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
   const sheet=morningDateBook(book,date);
   const ws=morningSheetOnDemand(book,sheet);
   const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});
   const header=morningGetHeader(rows);
-  const columns=morningColumnSummary(ws,rows,header);
-  const chosen=overrideColumn===null||overrideColumn===undefined?columns.rightmost:columns.candidates.find(c=>c.col===overrideColumn);
-  if(!chosen)return {sheet,date,header,columns,needsColumn:true,documents:[],warnings:['Крайний правый столбец с итоговыми количествами не определён. Для проверки выберите его вручную.']};
+  const chosen=morningIikoColumn(ws,rows,header);
+  const columns={iiko:chosen,candidates:[chosen]};
   const bounds=morningFindSections(rows,header);
   const warnings=[];
   const breakfastEnd=bounds.compoteLast>=0?bounds.compoteLast+1:bounds.pastryStart;
@@ -275,12 +278,10 @@ function morningPrintResult(){
   const picker=document.getElementById('morningColumnPicker');
   const exportBtn=document.getElementById('morningExportBtn');
   const r=morningState.result;
-  if(!area||!status||!picker||!r)return;
-  const opts=r.columns.candidates.map(c=>'<option value="'+c.col+'" '+(r.selected&&c.col===r.selected.col?'selected':'')+'>'+morningEscape(c.label+' · '+(c.name||'без заголовка')+' · '+c.numeric+' числовых значений'+(c.blue?', голубых ячеек '+c.blue:''))+'</option>').join('');
-  picker.innerHTML='<option value="">Выбрать итоговый столбец</option>'+opts;
-  picker.hidden=!r.needsColumn;
-  exportBtn.hidden=Boolean(r.needsColumn);
-  if(r.needsColumn){area.innerHTML='<p>Вкладка <b>'+morningEscape(r.sheet)+'</b> найдена. Не удалось определить крайний правый столбец итоговых количеств. Автоматического выбора нет.</p>';status.textContent='Требуется проверить итоговый столбец.';return}
+  if(!area||!status||!r)return;
+  if(picker)picker.hidden=true; // No manual override: only the iiko column.
+  if(exportBtn)exportBtn.hidden=Boolean(r.needsColumn);
+  if(r.needsColumn)return;
   const cards=r.documents.map(d=>{
     const sum=d.items.reduce((s,x)=>s+x.quantity,0);
     // Weight is kept in the source records for validation, but not displayed in the act preview.
@@ -288,7 +289,7 @@ function morningPrintResult(){
     return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable morning-acts-table"><thead><tr><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
   }).join('');
   const warnings=r.warnings.length?'<p style="color:#9d4b17"><b>Проверить:</b> '+r.warnings.map(morningEscape).join('; ')+'</p>':'';
-  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Крайний правый итоговый столбец: <b>'+morningEscape(r.selected.label)+'</b>.</p>'+warnings+cards;
+  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Источник количеств — iiko (столбец <b>'+morningEscape(r.selected.label)+'</b>).</p>'+warnings+cards;
   status.textContent='Предпросмотр готов. Это НЕ документы iiko. Никаких перемещений, расходных и проведения.';
   if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
 }
@@ -306,17 +307,6 @@ function morningPrepareFromBytes(bytes,name){
   const book={SheetNames:metadata.SheetNames,Sheets:{}};
   morningPrepareBook(book,name,bytes);
   return book;
-}
-function morningRetryColumn(){
-  if(!morningState.book)return;
-  const value=document.getElementById('morningColumnPicker').value;
-  if(value==='')return;
-  try{
-    if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Изменён столбец Excel. Повтори проверку iiko.');
-    morningState.result=morningAnalyze(morningState.book,morningSelectedDate(),Number(value));
-    morningPrintResult();
-    document.getElementById('morningStatus').textContent='Столбец выбран. Номенклатура проверена автоматически, если справочник iiko загружен.';
-  }catch(e){document.getElementById('morningStatus').textContent='Ошибка: '+(e.message||e)}
 }
 function morningExportPreview(){
   const r=morningState.result;
@@ -341,7 +331,7 @@ function morningExportPreview(){
       ['АКТ ПРИГОТОВЛЕНИЯ — '+name,''],
       ['Дата приготовления',r.date.iso],
       ['Вкладка плана',r.sheet],
-      ['Итоговый столбец',r.selected.label],
+      ['Столбец количеств iiko',r.selected.label],
       ['Статус','Для проверки, в iiko не отправлено'],
       ['Блюдо','Количество'],
       ...items.map(item=>[String(item.name||''),Number(item.quantity)||0]),
