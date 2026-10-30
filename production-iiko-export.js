@@ -1,7 +1,12 @@
 /* Preparing iikoServer productionDocument XML. No network calls or live document creation. */
-const iikoDraftState={catalog:new Map(),catalogCount:0,documents:[],issues:[],mismatches:[],ready:false,signature:''};
+const iikoDraftState={catalog:new Map(),catalogList:[],catalogCount:0,documents:[],issues:[],
+  mismatches:[],ready:false,signature:'',mappings:new Map(),mappingRows:[],
+  mappingDevice:'',mappingLoading:false,mappingLoaded:false,mappingError:''};
 function iikoDraftNorm(s){return String(s??'').toLowerCase().replace(/ё/g,'е').replace(/["«»]/g,'').replace(/\s+/g,' ').trim()}
-// Exact production name including case and ё: the goal is to correct the SOURCE workbook.
+// Composition in parentheses is not part of the product name. Preserve the full
+// original plan name for reports and the source Excel.
+function iikoDraftPrefix(s){return String(s??'').split(/[（(]/,1)[0].replace(/\s+/g,' ').trim()}
+function iikoDraftSourceKey(s){return iikoDraftNorm(iikoDraftPrefix(s))}
 function iikoDraftExact(s){return String(s??'').trim().replace(/\s+/g,' ')}
 function iikoDraftEsc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]))}
 function iikoDraftHtml(s){return iikoDraftEsc(s).replace(/&apos;/g,'&#39;')}
@@ -28,7 +33,7 @@ function iikoDraftXlsxRows(file,callback){
 async function iikoDraftLoadCatalog(){
   const file=document.getElementById('iikoDraftCatalog')?.files?.[0];if(!file)return;
   try{
-    iikoDraftState.catalog=new Map();iikoDraftState.catalogCount=0;
+    iikoDraftState.catalog=new Map();iikoDraftState.catalogList=[];iikoDraftState.catalogCount=0;
     iikoDraftInvalidate('Загружаю новый справочник iiko…');
     await iikoDraftXlsxRows(file,rows=>{
       const h=(rows[0]||[]).map(iikoDraftNorm);
@@ -49,29 +54,161 @@ async function iikoDraftLoadCatalog(){
         if(!list.some(x=>x.id===id&&x.article===article))list.push(val);
         count++;
       }
-      iikoDraftState.catalog=catalog;iikoDraftState.catalogCount=count;
+      iikoDraftState.catalog=catalog;iikoDraftState.catalogList=[...catalog.values()].flat();iikoDraftState.catalogCount=count;
     });
     iikoDraftAutoCheck();
   }catch(e){iikoDraftInvalidate('Ошибка справочника iiko: '+(e.message||e))}
 }
+
+async function iikoDraftLoadMappings(){
+  const device=typeof planGuestStored==='function'?planGuestStored():{deviceId:'',token:''};
+  iikoDraftState.mappingDevice=device.deviceId||'';
+  iikoDraftState.mappings=new Map();
+  iikoDraftState.mappingLoaded=false;
+  if(!device.deviceId||!device.token){
+    iikoDraftState.mappingError='Чтобы сохранять общие соответствия, подключите MAIN с 32-символьным кодом.';
+    iikoDraftState.mappingLoaded=true;
+    iikoDraftRenderSaved();
+    iikoDraftAutoCheck();
+    return;
+  }
+  iikoDraftState.mappingLoading=true;
+  iikoDraftState.mappingError='';
+  iikoDraftInvalidate('Загружаю общие сохранённые соответствия iiko…');
+  try{
+    const response=await planGuestFetch('iiko_map_list');
+    // Do not attach mappings from the previous MAIN after reconnecting to another device.
+    const now=planGuestStored();
+    if(now.deviceId!==device.deviceId)return;
+    for(const row of response.mappings||[]){
+      if(!row.source_key||!(row.target_id||row.target_article))continue;
+      iikoDraftState.mappings.set(row.source_key,row);
+    }
+    iikoDraftState.mappingLoaded=true;
+  }catch(e){
+    iikoDraftState.mappingError='Не удалось загрузить сохранённые соответствия: '+String(e.message||e);
+  }finally{
+    iikoDraftState.mappingLoading=false;
+    iikoDraftRenderSaved();
+    iikoDraftAutoCheck();
+  }
+}
+function iikoDraftRenderSaved(){
+  const el=document.getElementById('iikoDraftSavedMappings');
+  if(!el)return;
+  iikoDraftState.mappingRows=[...iikoDraftState.mappings.entries()];
+  const rows=iikoDraftState.mappingRows.map(([key,p],i)=>
+    '<tr><td>'+iikoDraftHtml(key)+'</td><td>'+iikoDraftHtml(p.target_name)+
+    '</td><td>'+iikoDraftHtml(p.target_article||p.target_id||'')+
+    '</td><td><button onclick="iikoDraftDeleteMapping('+i+')">Удалить</button></td></tr>').join('');
+  el.innerHTML='<details><summary>Запомненные соответствия ('+
+    iikoDraftState.mappings.size+')</summary>'+
+    (iikoDraftState.mappingError?'<p>'+iikoDraftHtml(iikoDraftState.mappingError)+'</p>':'')+
+    (rows?'<div class="tablewrap"><table class="nomtable"><thead><tr><th>Название в плане (до скобок)</th><th>Номенклатура iiko</th><th>Артикул / ID</th><th></th></tr></thead><tbody>'+
+      rows+'</tbody></table></div>':'<p>Пока нет вручную подтверждённых соответствий.</p>')+
+    '</details>';
+}
+function iikoDraftFilterChoices(index){
+  const selected=iikoDraftState.mismatches[index];
+  const input=document.getElementById('iikoDraftFind-'+index);
+  const picker=document.getElementById('iikoDraftChoose-'+index);
+  if(!selected?.canMap||!picker)return;
+  const query=iikoDraftNorm(input?.value||'');
+  const matches=[];
+  for(let i=0;i<iikoDraftState.catalogList.length;i++){
+    const p=iikoDraftState.catalogList[i];
+    if(!query||iikoDraftNorm(p.name).includes(query)||
+       iikoDraftNorm(p.article).includes(query)){
+      matches.push([i,p]);
+      if(matches.length===70)break;
+    }
+  }
+  picker.innerHTML='<option value="">Выберите номенклатуру iiko</option>'+
+    matches.map(([index,p])=>'<option value="'+index+'">'+
+      iikoDraftHtml(p.name)+' · '+iikoDraftHtml(p.article||p.id||'')+'</option>').join('');
+}
+async function iikoDraftSaveChoice(index){
+  const issue=iikoDraftState.mismatches[index];
+  const select=document.getElementById('iikoDraftChoose-'+index);
+  const value=String(select?.value||'');
+  const product=value!==''?iikoDraftState.catalogList[Number(value)]:null;
+  const status=document.getElementById('iikoDraftStatus');
+  if(!issue?.canMap||!product){
+    if(status)status.textContent='Выберите конкретную позицию iiko из списка.';
+    return;
+  }
+  const key=iikoDraftSourceKey(issue.name);
+  if(!key||key.length>300){if(status)status.textContent='Название для сопоставления некорректно.';return}
+  const pair=typeof planGuestStored==='function'?planGuestStored():null;
+  if(!pair?.deviceId||!pair?.token){
+    if(status)status.textContent='Чтобы запомнить выбор на всех устройствах, сначала подключите MAIN.';
+    return;
+  }
+  if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId){
+    if(status)status.textContent='Общий справочник соответствий для этого MAIN ещё не загружен.';
+    return;
+  }
+  if(status)status.textContent='Сохраняю соответствие в общем справочнике…';
+  try{
+    await planGuestFetch('iiko_map_save',{
+      source_key:key,target_name:product.name,target_id:product.id||'',target_article:product.article||''
+    });
+    iikoDraftState.mappings.set(key,{source_key:key,target_name:product.name,
+      target_id:product.id||'',target_article:product.article||''});
+    iikoDraftRenderSaved();
+    iikoDraftCheck();
+  }catch(e){
+    if(status)status.textContent='Не удалось сохранить соответствие: '+String(e.message||e);
+  }
+}
+async function iikoDraftDeleteMapping(index){
+  const item=iikoDraftState.mappingRows[index];
+  if(!item)return;
+  const [key,row]=item;
+  if(!window.confirm('Удалить соответствие «'+key+'» → «'+row.target_name+'»?'))return;
+  try{
+    await planGuestFetch('iiko_map_delete',{source_key:key});
+    iikoDraftState.mappings.delete(key);
+    iikoDraftRenderSaved();
+    iikoDraftAutoCheck();
+  }catch(e){
+    const status=document.getElementById('iikoDraftStatus');
+    if(status)status.textContent='Не удалось удалить соответствие: '+String(e.message||e);
+  }
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  if(typeof planGuestStored==='function')iikoDraftLoadMappings();
+});
 function iikoDraftStore(which,end){
   const id='iikoDraft'+which+(end==='from'?'From':'To');
   return String(document.getElementById(id)?.value||'').trim();
 }
 function iikoDraftItem(item){
-  // No persistent, suggested or local name substitutions.
-  // The Excel name must exactly match the iiko catalogue name.
-  const matches=iikoDraftState.catalog.get(iikoDraftExact(item.name))||[];
-  if(matches.length!==1)return {
-    error:matches.length?'В iiko несколько товаров с точно таким названием':'Нет точного совпадения в номенклатуре iiko'
-  };
-  const match=matches[0];
-  return {name:item.name,iikoName:match.name,product:match.id||'',productArticle:match.article||'',
+  const prefix=iikoDraftPrefix(item.name),key=iikoDraftSourceKey(item.name);
+  // First try the exact name before the parenthetical composition.
+  const exact=iikoDraftState.catalog.get(iikoDraftExact(prefix))||[];
+  if(exact.length===1)return iikoDraftMatchedItem(item,exact[0]);
+  // Previously approved mapping is used only after validating the actual iiko ID/article
+  // against the currently loaded catalogue. A renamed/removed product must be reapproved.
+  const saved=iikoDraftState.mappings.get(key);
+  if(saved){
+    const options=iikoDraftState.catalogList.filter(p=>
+      saved.target_id?p.id===saved.target_id:p.article===saved.target_article);
+    const unique=new Map(options.map(p=>[(p.id||'article:'+p.article),p]));
+    if(unique.size===1)return iikoDraftMatchedItem(item,[...unique.values()][0]);
+    return {error:'Сохранённое соответствие отсутствует или неоднозначно в текущем справочнике iiko'};
+  }
+  return {error:exact.length>1?'В справочнике iiko несколько товаров с таким названием':
+    'Не найдено название до скобок в справочнике iiko'};
+}
+function iikoDraftMatchedItem(item,product){
+  return {name:item.name,iikoName:product.name,product:product.id||'',productArticle:product.article||'',
     amount:Number(item.quantity),weight:item.weight||'',sourceRow:item.sourceRow};
 }
-function iikoDraftMismatch(doc,item,reason){
+function iikoDraftMismatch(doc,item,reason,canMap=false){
   return {kitchen:doc.warehouse,sourceRow:Number(item.sourceRow)||0,name:String(item.name||''),
-    weight:String(item.weight||''),quantity:Number(item.quantity)||0,reason};
+    prefix:iikoDraftPrefix(item.name),weight:String(item.weight||''),
+    quantity:Number(item.quantity)||0,reason,canMap};
 }
 function iikoDraftBuildData(){
   const original=typeof morningState!=='undefined'?morningState.result:null;
@@ -87,7 +224,7 @@ function iikoDraftBuildData(){
     const lines=[],names=new Map(),resolvedSizes=new Map();
     for(const item of iikoDraftOnlyPositive(doc.items)){
       const match=iikoDraftItem(item);
-      if(match.error){mismatches.push(iikoDraftMismatch(doc,item,match.error));continue}
+      if(match.error){mismatches.push(iikoDraftMismatch(doc,item,match.error,true));continue}
       const productRef=match.product||match.productArticle;
       const size=iikoDraftNorm(item.weight);
       const uniqueness=productRef+'/'+size;
@@ -126,6 +263,10 @@ function iikoDraftAutoCheck(){
     iikoDraftInvalidate('Акты сформированы. Для автоматической сверки загрузите актуальный справочник номенклатуры iiko.');
     return;
   }
+  if(!iikoDraftState.mappingLoaded){
+    iikoDraftInvalidate(iikoDraftState.mappingError||'Загружаю запомненные соответствия iiko…');
+    return;
+  }
   return iikoDraftCheck();
 }
 function iikoDraftCheck(){
@@ -139,18 +280,32 @@ function iikoDraftCheck(){
     iikoDraftState.signature=data.signature;
     const sum=d=>d.items.reduce((n,x)=>n+x.amount,0);
     const heading=data.documents.map(d=>'<div><b>Акт '+iikoDraftHtml(d.warehouseCode)+'</b> · '+iikoDraftHtml(d.warehouse)+' · '+d.items.length+' совпавших поз. · '+sum(d)+' шт. · NEW (без проведения)</div>').join('');
-    const rowHTML=data.mismatches.map(x=>'<tr><td>'+iikoDraftHtml(x.kitchen)+'</td><td>'+iikoDraftHtml(data.sourceSheet)+'</td><td>'+x.sourceRow+'</td><td>'+iikoDraftHtml(x.name)+'</td><td>'+iikoDraftHtml(x.weight)+'</td><td>'+x.quantity+'</td><td>'+iikoDraftHtml(x.reason)+'</td></tr>').join('');
+    const rowHTML=data.mismatches.map((x,i)=>{
+      const controls=x.canMap?'<div><input type="search" id="iikoDraftFind-'+i+
+        '" placeholder="Найти позицию iiko по названию / артикулу" oninput="iikoDraftFilterChoices('+i+')">'+
+        '<select id="iikoDraftChoose-'+i+'"><option value="">Выберите iiko</option></select>'+
+        '<button onclick="iikoDraftSaveChoice('+i+')">Подтвердить и запомнить</button></div>':'';
+      return '<div class="iiko-mapping-card"><div><b>'+iikoDraftHtml(x.name)+
+        '</b></div><div class="muted">Кухня: '+iikoDraftHtml(x.kitchen)+
+        ' · Лист: '+iikoDraftHtml(data.sourceSheet)+' · Строка: '+x.sourceRow+
+        '</div><div>До скобок: <b>'+iikoDraftHtml(x.prefix)+
+        '</b></div><div class="muted">'+iikoDraftHtml(x.reason)+
+        '</div><div class="iiko-mapping-choice">'+controls+'</div></div>';
+    }).join('');
     const mismatchHTML=data.mismatches.length?
-      '<h4>Номенклатура не совпадает: '+data.mismatches.length+' строк</h4>'+
-      '<p>Администратор исправляет названия в исходном Excel точно по справочнику iiko, сохраняет файл и загружает его повторно. Подмены названий не сохраняются.</p>'+
-      '<div class="tablewrap"><table class="nomtable"><thead><tr><th>Кухня</th><th>Лист</th><th>Строка</th><th>В плане</th><th>Вес / объём</th><th>Кол-во</th><th>Причина</th></tr></thead><tbody>'+rowHTML+'</tbody></table></div>':
-      '<p>Все названия блюд точно совпадают с загруженным справочником iiko.</p>';
+      '<h4>Требуется сопоставление: '+data.mismatches.length+' строк</h4>'+
+      '<p>Сначала сравнивается название до первой скобки (состав игнорируется). Для незнакомых блюд выберите правильную позицию iiko и нажмите «Подтвердить и запомнить». Общие соответствия доступны другим браузерам, подключённым к MAIN.</p>'+
+      '<div class="iiko-mapping-list">'+rowHTML+'</div>':
+      '<p>Все блюда сопоставлены с текущим справочником iiko (название до скобок или подтверждённое соответствие).</p>';
     const otherHTML=data.issues.length?'<p style="color:#b42318"><b>Другие замечания:</b></p><ul>'+data.issues.map(x=>'<li>'+iikoDraftHtml(x)+'</li>').join('')+'</ul>':'';
     const result=document.getElementById('iikoDraftResult');
     if(result)result.innerHTML=heading+mismatchHTML+otherHTML;
+    for(let i=0;i<data.mismatches.length;i++){
+      if(data.mismatches[i].canMap)iikoDraftFilterChoices(i);
+    }
     const missing=data.mismatches.length;
     document.getElementById('iikoDraftStatus').textContent=missing?
-      'Не совпадает номенклатура: '+missing+' строк. Исправь исходный Excel и загрузи его повторно.':
+      'Требуется выбрать соответствия iiko: '+missing+' строк. Используй поиск, затем «Подтвердить и запомнить».':
       data.issues.length?'Есть замечания: '+data.issues.length+'. Пакет не готов.':
       'Названия совпали. Два акта готовы к скачиванию в тестовом пакете (без отправки в iiko).';
     const btn=document.getElementById('iikoDraftDownload');
@@ -169,10 +324,10 @@ function iikoDraftDownloadMismatches(){
   if(!data.length)throw Error('Несоответствий нет. Проверка выполняется автоматически после загрузки файлов.');
   if(typeof XLSX==='undefined')throw Error('Не загружен модуль Excel.');
   const r=morningState.result;
-  const rows=[['Дата','Лист Excel','Кухня','Строка Excel','Наименование в плане','Вес / объём','Количество','Несоответствие']];
-  for(const x of data)rows.push([r.date.iso,r.sheet,x.kitchen,x.sourceRow,x.name,x.weight,x.quantity,x.reason]);
+  const rows=[['Дата','Лист Excel','Кухня','Строка Excel','Наименование в плане','Название до скобок','Вес / объём','Количество','Причина']];
+  for(const x of data)rows.push([r.date.iso,r.sheet,x.kitchen,x.sourceRow,x.name,x.prefix,x.weight,x.quantity,x.reason]);
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols']=[{wch:13},{wch:18},{wch:20},{wch:14},{wch:50},{wch:16},{wch:14},{wch:72}];
+  ws['!cols']=[{wch:13},{wch:18},{wch:20},{wch:14},{wch:50},{wch:42},{wch:16},{wch:14},{wch:72}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Не совпадает с iiko');
   XLSX.writeFile(wb,'несовпадения_iiko_'+r.date.iso+'.xlsx');
@@ -192,7 +347,7 @@ function iikoDraftXml(doc){
   return '<?xml version="1.0" encoding="UTF-8"?>\n<document><status>NEW</status><dateIncoming>'+iikoDraftEsc(doc.dateIncoming)+'</dateIncoming><storeFrom>'+iikoDraftEsc(doc.storeFrom)+'</storeFrom><storeTo>'+iikoDraftEsc(doc.storeTo)+'</storeTo><comment>Помогатор: проект акта приготовления, без проведения</comment><items>'+lines+'</items></document>';
 }
 async function iikoDraftDownload(){
-  if(!iikoDraftState.ready)throw Error('Исправь несовпадения в исходном Excel, загрузи его повторно и сверяй заново.');
+  if(!iikoDraftState.ready)throw Error('Сначала сопоставьте неподтверждённые блюда со справочником iiko.');
   if(typeof JSZip==='undefined')throw Error('Не загружен модуль ZIP');
   const zip=new JSZip();
   const json={schema:'pomogator.iiko.production-draft.v2',mode:'offline-test',endpoint:'/resto/api/documents/import/productionDocument',posted:false,
