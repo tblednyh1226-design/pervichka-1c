@@ -12,6 +12,36 @@ function planGuestStored(){
   const token=localStorage.getItem('pomogator_guest_browser_token')||'';
   return {deviceId,token};
 }
+function planBridgeRefreshSavedCode(){
+  const saved=planGuestStored();
+  const hasCode=Boolean(saved.deviceId&&/^[0-9a-f]{32}$/i.test(saved.token));
+  const status=document.getElementById('planBridgeSavedCode');
+  if(status)status.textContent=hasCode
+    ?'Код MAIN сохранён на этом устройстве. После обновления страницы вводить его заново не нужно.'
+    :'Код пока не сохранён. Введите 32 символа и нажмите «Подключить MAIN».';
+  const reveal=document.getElementById('planBridgeShowCodeBtn');
+  if(reveal){
+    reveal.disabled=!hasCode;
+    const input=document.getElementById('planBridgeCodeInput');
+    reveal.textContent=input?.type==='text'?'Скрыть код':'Показать код';
+  }
+}
+function planBridgeRestoreSavedCode(){
+  const saved=planGuestStored();
+  const el=document.getElementById('planBridgeCodeInput');
+  // Existing successful pairings are already stored locally; restore them visually.
+  if(el&&saved.deviceId&&/^[0-9a-f]{32}$/i.test(saved.token)){
+    el.value=saved.token;
+    el.type='password';
+  }
+  planBridgeRefreshSavedCode();
+}
+function planBridgeToggleCodeVisibility(){
+  const el=document.getElementById('planBridgeCodeInput');
+  if(!el)return;
+  el.type=el.type==='password'?'text':'password';
+  planBridgeRefreshSavedCode();
+}
 async function planGuestFetch(action,extra={},isClaim=false){
   const {deviceId,token}=planGuestStored();
   if(!isClaim && (!deviceId||!token))throw new Error('Сначала подключите MAIN с помощью кода из программы на компьютере');
@@ -35,20 +65,25 @@ async function planBridgePair(){
     const r=await planGuestFetch('claim',{browser_token:token},true);
     localStorage.setItem('pomogator_guest_device_id',r.device_id);
     localStorage.setItem('pomogator_guest_browser_token',token);
-    if(el)el.value='';
-    planBridgeStatus('MAIN подключён к этому браузеру. Теперь можно запросить Excel.');
+    if(el){el.value=token;el.type='password';}
+    planBridgeRefreshSavedCode();
+    planBridgeStatus('MAIN подключён. Код сохранён на этом устройстве и восстановится при следующем открытии Помогатора.');
     await planBridgeDeviceStatus();
   }catch(e){planBridgeStatus('Ошибка подключения: '+(e.message||e),true)}
 }
 function planBridgeDisconnect(){
+  if(!window.confirm('Забыть сохранённый 32-символьный код MAIN на этом устройстве и отключить доступ к файлу?'))return;
   localStorage.removeItem('pomogator_guest_device_id');
   localStorage.removeItem('pomogator_guest_browser_token');
   planBridgeBytes=null;
+  const codeInput=document.getElementById('planBridgeCodeInput');
+  if(codeInput){codeInput.value='';codeInput.type='password';}
+  planBridgeRefreshSavedCode();
   const download=document.getElementById('planBridgeDownloadBtn');
   if(download)download.hidden=true;
   const preview=document.getElementById('planBridgePreview');if(preview)preview.textContent='';
   const device=document.getElementById('planBridgeDevice');if(device)device.textContent='MAIN не подключён в этом браузере.';
-  planBridgeStatus('Привязка из браузера очищена. Для повторного подключения нужен код MAIN.');
+  planBridgeStatus('Код удалён с этого устройства. Для повторного подключения нужен код с MAIN.');
 }
 async function planBridgeDeviceStatus() {
   try {
@@ -143,6 +178,7 @@ async function planBridgeRequest() {
   }
 }
 document.addEventListener('DOMContentLoaded',()=>{
+  planBridgeRestoreSavedCode();
   const btn=document.querySelector("#home button[onclick=\"show('iiko')\"]");
   if(btn)btn.addEventListener('click',()=>setTimeout(planBridgeDeviceStatus,200));
   planBridgeDeviceStatus();
