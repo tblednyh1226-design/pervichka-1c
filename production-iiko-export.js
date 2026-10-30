@@ -144,8 +144,8 @@ async function iikoDraftSaveChoice(index){
     if(status)status.textContent='Чтобы запомнить выбор на всех устройствах, сначала подключите MAIN.';
     return;
   }
-  if(!iikoDraftState.mappingLoaded){
-    if(status)status.textContent='Общий справочник соответствий пока не загружен.';
+  if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId){
+    if(status)status.textContent='Общий справочник соответствий для этого MAIN ещё не загружен.';
     return;
   }
   if(status)status.textContent='Сохраняю соответствие в общем справочнике…';
