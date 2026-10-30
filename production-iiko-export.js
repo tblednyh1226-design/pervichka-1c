@@ -51,7 +51,7 @@ async function iikoDraftLoadCatalog(){
       }
       iikoDraftState.catalog=catalog;iikoDraftState.catalogCount=count;
     });
-    iikoDraftInvalidate('Номенклатура iiko загружена: '+iikoDraftState.catalogCount+' записей. Запусти проверку двух актов.');
+    iikoDraftAutoCheck();
   }catch(e){iikoDraftInvalidate('Ошибка справочника iiko: '+(e.message||e))}
 }
 function iikoDraftStore(which,end){
@@ -115,6 +115,19 @@ function iikoDraftBuildData(){
   const signature=iikoDraftHashText(JSON.stringify(documents));
   return {date,sourceSheet:original.sheet,sourceColumn:original.selected?.label||'',documents,issues,mismatches,signature};
 }
+// Runs automatically whenever the source plan, day, column, iiko catalogue or stores change.
+function iikoDraftAutoCheck(){
+  const plan=typeof morningState!=='undefined'?morningState.result:null;
+  if(!plan||plan.needsColumn||!Array.isArray(plan.documents)||plan.documents.length!==2){
+    iikoDraftInvalidate('Сначала получите Excel и сформируйте два акта за выбранную дату. Сверка запустится автоматически.');
+    return;
+  }
+  if(!iikoDraftState.catalogCount){
+    iikoDraftInvalidate('Акты сформированы. Для автоматической сверки загрузите актуальный справочник номенклатуры iiko.');
+    return;
+  }
+  return iikoDraftCheck();
+}
 function iikoDraftCheck(){
   iikoDraftInvalidate();
   try{
@@ -153,7 +166,7 @@ function iikoDraftCheck(){
 }
 function iikoDraftDownloadMismatches(){
   const data=iikoDraftState.mismatches;
-  if(!data.length)throw Error('Несоответствий нет. Сначала нажми «Сверить номенклатуру».');
+  if(!data.length)throw Error('Несоответствий нет. Проверка выполняется автоматически после загрузки файлов.');
   if(typeof XLSX==='undefined')throw Error('Не загружен модуль Excel.');
   const r=morningState.result;
   const rows=[['Дата','Лист Excel','Кухня','Строка Excel','Наименование в плане','Вес / объём','Количество','Несоответствие']];
