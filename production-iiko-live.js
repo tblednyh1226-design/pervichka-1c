@@ -83,7 +83,7 @@ function iikoLiveSetCatalog(catalog){
     if(!/^[0-9a-f-]{36}$/i.test(id))continue;
     if(seenIds.has(id))continue;
     seenIds.add(id);
-    const item={name,id,article},key=iikoDraftExact(name);
+    const item={name,id,article,type:String(p.type||p.productType||'').toUpperCase()},key=iikoDraftExact(name);
     if(!map.has(key))map.set(key,[]);
     map.get(key).push(item);values.push(item);
   }

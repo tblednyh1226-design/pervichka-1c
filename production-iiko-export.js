@@ -47,6 +47,7 @@ async function iikoDraftLoadCatalog(){
       const nameCol=h.findIndex(x=>/^(наименование|название|name|product name|номенклатура)$/.test(x));
       const guidCol=h.findIndex(x=>/^(id|uuid|guid|productid|product id|идентификатор|id блюда|id номенклатуры)$/.test(x));
       const articleCol=h.findIndex(x=>/^(артикул|article|productarticle|product article|код iiko)$/.test(x));
+      const typeCol=h.findIndex(x=>/^(тип|тип номенклатуры|type|producttype|product type)$/.test(x));
       if(nameCol<0||(guidCol<0&&articleCol<0))throw Error('В справочнике нужны колонки «Наименование» и «ID/UUID» либо «Артикул».');
       const catalog=new Map();let count=0;
       for(const row of rows.slice(1)){
@@ -55,7 +56,8 @@ async function iikoDraftLoadCatalog(){
         const article=articleCol>=0?String(row[articleCol]||'').trim():'';
         if(!name||(!id&&!article))continue;
         if(id&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))continue;
-        const key=iikoDraftExact(name),val={name,id,article};
+        const type=typeCol>=0?String(row[typeCol]||'').trim().toUpperCase():'';
+        const key=iikoDraftExact(name),val={name,id,article,type};
         if(!catalog.has(key))catalog.set(key,[]);
         const list=catalog.get(key);
         if(!list.some(x=>x.id===id&&x.article===article))list.push(val);
@@ -115,24 +117,62 @@ function iikoDraftRenderSaved(){
       rows+'</tbody></table></div>':'<p>Пока нет вручную подтверждённых соответствий.</p>')+
     '</details>';
 }
+// Show relevant results only, never the first arbitrary 70 catalog items.
+function iikoDraftChoiceTokens(s){
+  return iikoDraftNorm(s).split(/[^a-zа-я0-9]+/i)
+    .filter(x=>x.length>=3&&!['для','или','при','без','это','как','его','она'].includes(x));
+}
+function iikoDraftChoiceScore(product,search){
+  const q=iikoDraftNorm(search);
+  if(!q)return 0;
+  const title=iikoDraftNorm(product.name),article=iikoDraftNorm(product.article);
+  if(article&&article===q)return 12000;
+  if(article&&article.includes(q))return 6500;
+  if(title===q)return 11000;
+  if(title.startsWith(q))return 9500;
+  if(title.includes(q))return 8000;
+  const words=iikoDraftChoiceTokens(q),titleWords=iikoDraftChoiceTokens(title);
+  if(!words.length)return 0;
+  let matches=0;
+  for(const w of words){
+    const found=titleWords.some(t=>t===w||(w.length>=5&&t.startsWith(w.slice(0,Math.max(4,w.length-2))))||
+      (t.length>=5&&w.startsWith(t.slice(0,Math.max(4,t.length-2)))));
+    if(found)matches++;
+  }
+  return matches?Math.round(1000*matches/words.length)+matches*100:0;
+}
 function iikoDraftFilterChoices(index){
-  const selected=iikoDraftState.mismatches[index];
+  const issue=iikoDraftState.mismatches[index];
   const input=document.getElementById('iikoDraftFind-'+index);
   const picker=document.getElementById('iikoDraftChoose-'+index);
-  if(!selected?.canMap||!picker)return;
-  const query=iikoDraftNorm(input?.value||'');
-  const matches=[];
-  for(let i=0;i<iikoDraftState.catalogList.length;i++){
-    const p=iikoDraftState.catalogList[i];
-    if(!query||iikoDraftNorm(p.name).includes(query)||
-       iikoDraftNorm(p.article).includes(query)){
-      matches.push([i,p]);
-      if(matches.length===70)break;
-    }
+  const allCheckbox=document.getElementById('iikoDraftAllTypes-'+index);
+  const note=document.getElementById('iikoDraftChoiceNote-'+index);
+  if(!issue?.canMap||!picker)return;
+  const query=String(input?.value||'').trim();
+  if(!query){
+    picker.innerHTML='<option value="">Введите название блюда или артикул для поиска</option>';
+    picker.value='';
+    if(note)note.textContent='Сначала введите название или артикул. Случайные позиции не показываются.';
+    return;
   }
-  picker.innerHTML='<option value="">Выберите номенклатуру iiko</option>'+
-    matches.map(([index,p])=>'<option value="'+index+'">'+
-      iikoDraftHtml(p.name)+' · '+iikoDraftHtml(p.article||p.id||'')+'</option>').join('');
+  const all=Boolean(allCheckbox?.checked);
+  const selected=iikoDraftState.catalogList.map((product,index)=>{
+      const type=String(product.type||'').toUpperCase();
+      if(!all&&type&&!['DISH','PREPARED'].includes(type))return null;
+      const score=iikoDraftChoiceScore(product,query);
+      return score>0?{product,index,score}:null;
+    }).filter(Boolean).sort((a,b)=>b.score-a.score||
+      String(a.product.name).localeCompare(String(b.product.name),'ru')).slice(0,30);
+  picker.innerHTML='<option value="">'+
+    (selected.length?'Выберите правильное блюдо iiko':'Совпадений не найдено')+'</option>'+
+    selected.map(({index,product})=>'<option value="'+index+'">'+iikoDraftHtml(product.name)+
+      (product.article?' · '+iikoDraftHtml(product.article):'')+
+      (product.type?' · '+iikoDraftHtml(product.type):'')+'</option>').join('');
+  picker.value='';
+  if(note)note.textContent=selected.length?
+    'Найдено '+selected.length+' подходящих позиций. Выберите нужную; автоматически ничего не подставляется.':
+    all?'По запросу ничего не найдено. Уточните название или артикул.':
+    'Среди блюд и заготовок совпадений нет. Измените запрос или включите «Все типы».';
 }
 async function iikoDraftSaveChoice(index){
   const issue=iikoDraftState.mismatches[index];
@@ -154,6 +194,9 @@ async function iikoDraftSaveChoice(index){
   if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId){
     if(status)status.textContent='Общий справочник соответствий для этого MAIN ещё не загружен.';
     return;
+  }
+  if(product.type&&!['DISH','PREPARED'].includes(product.type)){
+    if(!window.confirm('Вы выбрали позицию типа '+product.type+' — это не готовое блюдо/заготовка. Сохранить такое соответствие?'))return;
   }
   if(status)status.textContent='Сохраняю соответствие в общем справочнике…';
   try{
@@ -194,7 +237,8 @@ function iikoDraftItem(item){
   const prefix=iikoDraftPrefix(item.name),key=iikoDraftSourceKey(item.name);
   // First try the exact name before the parenthetical composition.
   const exact=iikoDraftState.catalog.get(iikoDraftExact(prefix))||[];
-  if(exact.length===1)return iikoDraftMatchedItem(item,exact[0]);
+  const dishes=exact.filter(p=>!p.type||['DISH','PREPARED'].includes(p.type));
+  if(dishes.length===1)return iikoDraftMatchedItem(item,dishes[0]);
   // Previously approved mapping is used only after validating the actual iiko ID/article
   // against the currently loaded catalogue. A renamed/removed product must be reapproved.
   const saved=iikoDraftState.mappings.get(key);
@@ -205,7 +249,8 @@ function iikoDraftItem(item){
     if(unique.size===1)return iikoDraftMatchedItem(item,[...unique.values()][0]);
     return {error:'Сохранённое соответствие отсутствует или неоднозначно в текущем справочнике iiko'};
   }
-  return {error:exact.length>1?'В справочнике iiko несколько товаров с таким названием':
+  return {error:dishes.length>1?'В справочнике iiko несколько блюд с таким названием':
+    exact.length?'Название найдено, но тип номенклатуры не является блюдом/заготовкой — требуется подтверждение':
     'Не найдено название до скобок в справочнике iiko'};
 }
 function iikoDraftMatchedItem(item,product){
@@ -289,8 +334,12 @@ function iikoDraftCheck(){
     const heading=data.documents.map(d=>'<div><b>Акт '+iikoDraftHtml(d.warehouseCode)+'</b> · '+iikoDraftHtml(d.warehouse)+' · '+d.items.length+' совпавших поз. · '+sum(d)+' шт. · NEW (без проведения)</div>').join('');
     const rowHTML=data.mismatches.map((x,i)=>{
       const controls=x.canMap?'<div><input type="search" id="iikoDraftFind-'+i+
-        '" placeholder="Найти позицию iiko по названию / артикулу" oninput="iikoDraftFilterChoices('+i+')">'+
-        '<select id="iikoDraftChoose-'+i+'"><option value="">Выберите iiko</option></select>'+
+        '" placeholder="Введите название блюда или артикул" value="'+iikoDraftHtml(x.prefix)+
+        '" oninput="iikoDraftFilterChoices('+i+')">'+
+        '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" style="width:16px;min-width:16px;max-width:16px;height:16px" id="iikoDraftAllTypes-'+i+
+        '" onchange="iikoDraftFilterChoices('+i+')"> Все типы (товары, услуги и др.)</label>'+
+        '<select id="iikoDraftChoose-'+i+'"><option value="">Ищу подходящие блюда…</option></select>'+
+        '<small class="muted" id="iikoDraftChoiceNote-'+i+'"></small>'+
         '<button onclick="iikoDraftSaveChoice('+i+')">Подтвердить и запомнить</button></div>':'';
       return '<div class="iiko-mapping-card"><div><b>'+iikoDraftHtml(x.name)+
         '</b></div><div class="muted">Кухня: '+iikoDraftHtml(x.kitchen)+
