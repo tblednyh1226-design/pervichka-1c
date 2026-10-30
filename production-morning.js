@@ -213,7 +213,19 @@ function morningFindSections(rows,header){
   if(compoteLast>=pastryStart)throw Error('Компоты расположены после выпечки — проверьте структуру листа.');
   return {pastryStart,compoteLast,nextAfterPastry};
 }
-function morningExtract(rows,header,col,from,to,warnings){
+function morningLargePieInPieces(name,weight){
+  // Original production plan lists large pies as 1000гр.; it may later use "кус."
+  // in the unit or name. Never convert ordinary 80гр. пирожки or small pies.
+  const dish=morningNorm(name);
+  if(!/^пирог(?:\s|$)/.test(dish))return false;
+  const unit=morningNorm(weight);
+  if(/(?:^|[^а-я])кус\.?(?=$|[^а-я])/.test(dish+' '+unit))return true;
+  const m=/^(\d+(?:[.,]\d+)?)\s*(кг|гр|г)\.?$/.exec(unit);
+  if(!m)return false;
+  const grams=Number(m[1].replace(',','.'))*(m[2]==='кг'?1000:1);
+  return grams>=900;
+}
+function morningExtract(rows,header,col,from,to,warnings,convertLargePies=false){
   const result=[];
   for(let r=from;r<to;r++){
     const row=rows[r]||[];
@@ -228,7 +240,13 @@ function morningExtract(rows,header,col,from,to,warnings){
     }
     if(quantity<=0)continue;
     const code=header.codeCol===null?'':String(row[header.codeCol]??'').trim();
-    result.push({name,quantity,code,weight:String(row[header.nameCol+1]??'').trim(),sourceRow:r+1});
+    const weight=String(row[header.nameCol+1]??'').trim();
+    const slices=convertLargePies&&morningLargePieInPieces(name,weight);
+    const finalQuantity=slices?quantity*8:quantity;
+    result.push({
+      name,quantity:finalQuantity,code,weight,sourceRow:r+1,
+      ...(slices?{sourceQuantity:quantity,conversionFactor:8,quantityUnit:'кус.'}:{})
+    });
   }
   return result;
 }
@@ -263,7 +281,7 @@ function morningAnalyze(book,date){
     if(extra.length)warnings.push('После последней строки компота и до выпечки есть ещё '+extra.length+' строк с количеством: они не включены в БК.');
   }
   const bk=morningExtract(rows,header,chosen.col,header.row+1,breakfastEnd,warnings);
-  const pk=morningExtract(rows,header,chosen.col,bounds.pastryStart+1,bounds.nextAfterPastry,warnings);
+  const pk=morningExtract(rows,header,chosen.col,bounds.pastryStart+1,bounds.nextAfterPastry,warnings,true);
   if(!bk.length)warnings.push('На Бухара кухня не найдено блюд с положительным количеством.');
   if(!pk.length)warnings.push('На Правда кухня не найдено выпечки с положительным количеством.');
   const documents=[
@@ -289,7 +307,12 @@ function morningPrintResult(){
     return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable morning-acts-table"><thead><tr><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
   }).join('');
   const warnings=r.warnings.length?'<p style="color:#9d4b17"><b>Проверить:</b> '+r.warnings.map(morningEscape).join('; ')+'</p>':'';
-  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Источник количеств — iiko (столбец <b>'+morningEscape(r.selected.label)+'</b>).</p>'+warnings+cards;
+  const slices=r.documents.flatMap(d=>d.items.filter(x=>x.conversionFactor===8));
+  const convertedPies=slices.reduce((n,x)=>n+x.sourceQuantity,0);
+  const convertedPieces=slices.reduce((n,x)=>n+x.quantity,0);
+  const conversionNote=slices.length?'<p><b>Большие пироги:</b> '+morningEscape(convertedPies)+
+    ' пирогов × 8 = '+morningEscape(convertedPieces)+' кусков. В акты включены куски.</p>':'';
+  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Источник количеств — iiko (столбец <b>'+morningEscape(r.selected.label)+'</b>).</p>'+warnings+conversionNote+cards;
   status.textContent='Предпросмотр готов. Это НЕ документы iiko. Никаких перемещений, расходных и проведения.';
   if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
 }
@@ -332,7 +355,9 @@ function morningExportPreview(){
       ['Дата приготовления',r.date.iso],
       ['Вкладка плана',r.sheet],
       ['Столбец количеств iiko',r.selected.label],
-      ['Статус','Для проверки, в iiko не отправлено'],
+      ['Статус',items.some(item=>item.conversionFactor===8)
+        ?'Для проверки: большие пироги ×8 (куски). В iiko не отправлено'
+        :'Для проверки, в iiko не отправлено'],
       ['Блюдо','Количество'],
       ...items.map(item=>[String(item.name||''),Number(item.quantity)||0]),
       ['ИТОГО',total]
