@@ -1,5 +1,5 @@
 /* Date-selected production act preparation. Does not contact iiko or post documents. */
-let morningState={book:null,fileName:'',result:null,selectedColumn:null};
+let morningState={book:null,bytes:null,fileName:'',result:null,selectedColumn:null};
 
 function morningNorm(v) {
   return String(v??'').toLowerCase().replace(/ё/g,'е').replace(/\s+/g,' ').trim();
@@ -177,10 +177,24 @@ function morningExtract(rows,header,col,from,to,warnings){
   }
   return result;
 }
+// Parse only the selected day. The original Excel bytes remain in memory for changing dates.
+function morningSheetOnDemand(book,name){
+  if(book.Sheets&&book.Sheets[name])return book.Sheets[name];
+  if(!morningState.bytes)throw Error('Для выбранного листа требуется повторно загрузить Excel.');
+  const partial=XLSX.read(morningState.bytes,{
+    type:'array',sheets:name,cellDates:true,cellStyles:false,
+    cellFormula:false,cellHTML:false,cellText:false
+  });
+  const worksheet=partial.Sheets?.[name];
+  if(!worksheet)throw Error('Не удалось прочитать лист «'+name+'».');
+  if(!book.Sheets)book.Sheets={};
+  book.Sheets[name]=worksheet;
+  return worksheet;
+}
 function morningAnalyze(book,date,overrideColumn){
   if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
   const sheet=morningDateBook(book,date);
-  const ws=book.Sheets[sheet];
+  const ws=morningSheetOnDemand(book,sheet);
   const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});
   const header=morningGetHeader(rows);
   const columns=morningColumnSummary(ws,rows,header);
@@ -226,16 +240,19 @@ function morningPrintResult(){
   status.textContent='Предпросмотр готов. Это НЕ документы iiko. Никаких перемещений, расходных и проведения.';
   if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
 }
-function morningPrepareBook(book,name){
-  morningState.book=book;morningState.fileName=name||'План производства.xlsx';
+function morningPrepareBook(book,name,bytes=null){
+  morningState.book=book;morningState.bytes=bytes;morningState.fileName=name||'План производства.xlsx';
   if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Загружен другой Excel. Проверь акты перед выгрузкой.');
   morningState.result=null;morningState.selectedColumn=null;
   morningBuildSelectedDate();
 }
 function morningPrepareFromBytes(bytes,name){
   if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
-  const book=XLSX.read(bytes,{type:'array',cellStyles:true,cellDates:true});
-  morningPrepareBook(book,name);
+  const metadata=XLSX.read(bytes,{type:'array',bookSheets:true});
+  if(!metadata.SheetNames?.length)throw Error('В Excel нет листов');
+  const book={SheetNames:metadata.SheetNames,Sheets:{}};
+  morningPrepareBook(book,name,bytes);
+  return book;
 }
 function morningRetryColumn(){
   if(!morningState.book)return;
