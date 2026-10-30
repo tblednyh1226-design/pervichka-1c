@@ -37,20 +37,20 @@ function iikoLiveRenderStores(){
     iikoDraftHtml(s.name)+(s.code?' ('+iikoDraftHtml(s.code)+')':'')+'</option>').join('');
   for(const id of ['iikoDraftBKFrom','iikoDraftBKTo','iikoDraftPKFrom','iikoDraftPKTo']){
     const field=document.getElementById(id);
-    if(!field)return;
+    if(!field)continue;
     const previous=String(field.value||'');
     field.innerHTML='<option value="">Выберите склад iiko</option>'+options;
     if(iikoLiveState.stores.some(s=>s.id===previous))field.value=previous;
   }
 }
 function iikoLiveSetCatalog(catalog){
-  const map=new Map(),values=[];
+  const map=new Map(),values=[],seenIds=new Set();
   for(const p of catalog||[]){
     const name=String(p.name||'').trim(),id=String(p.id||'').trim(),article=String(p.article||'').trim();
     if(!name||(!id&&!article))continue;
     if(!/^[0-9a-f-]{36}$/i.test(id))continue;
-    const unique=id||article;
-    if(values.some(x=>x.id===unique))continue;
+    if(seenIds.has(id))continue;
+    seenIds.add(id);
     const item={name,id,article},key=iikoDraftExact(name);
     if(!map.has(key))map.set(key,[]);
     map.get(key).push(item);values.push(item);
