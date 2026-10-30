@@ -106,6 +106,9 @@ async function planBridgeRequest() {
   const btn=document.getElementById('planBridgeRequestBtn');
   if(btn)btn.disabled=true;
   planBridgeBytes=null;
+  // A fresh MAIN request replaces the old plan; do not keep previous acts exportable if it fails.
+  if(typeof morningState!=='undefined'){morningState.book=null;morningState.result=null;}
+  if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Запросили новый план с MAIN. Предыдущая проверка снята.');
   document.getElementById('planBridgeDownloadBtn').hidden=true;
   document.getElementById('planBridgePreview').textContent='';
   try {
