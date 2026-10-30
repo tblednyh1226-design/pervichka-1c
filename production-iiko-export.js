@@ -1,8 +1,13 @@
 /* Preparing iikoServer productionDocument XML. No network calls or live document creation. */
-const iikoDraftState={catalog:new Map(),catalogCount:0,documents:[],issues:[],mismatches:[],ready:false,signature:''};
+const iikoDraftState={catalog:new Map(),catalogList:[],catalogCount:0,documents:[],issues:[],
+  mismatches:[],ready:false,signature:'',mappings:new Map(),mappingRows:[],
+  mappingDevice:'',mappingLoading:false,mappingLoaded:false,mappingError:''};
 function iikoDraftNorm(s){return String(s??'').toLowerCase().replace(/ё/g,'е').replace(/["«»]/g,'').replace(/\s+/g,' ').trim()}
-// Exact production name including case and ё: the goal is to correct the SOURCE workbook.
-function iikoDraftExact(s){return String(s??'').trim().replace(/\s+/g,' ')}
+// Composition in parentheses is not part of the product name. Preserve the full
+// original plan name for reports and the source Excel.
+function iikoDraftPrefix(s){return String(s??'').split(/[（(]/,1)[0].replace(/\\s+/g,' ').trim()}
+function iikoDraftSourceKey(s){return iikoDraftNorm(iikoDraftPrefix(s))}
+function iikoDraftExact(s){return String(s??'').trim().replace(/\\s+/g,' ')}
 function iikoDraftEsc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]))}
 function iikoDraftHtml(s){return iikoDraftEsc(s).replace(/&apos;/g,'&#39;')}
 function iikoDraftOnlyPositive(items){return (items||[]).filter(x=>Number.isFinite(Number(x.quantity))&&Number(x.quantity)>0)}
@@ -28,7 +33,7 @@ function iikoDraftXlsxRows(file,callback){
 async function iikoDraftLoadCatalog(){
   const file=document.getElementById('iikoDraftCatalog')?.files?.[0];if(!file)return;
   try{
-    iikoDraftState.catalog=new Map();iikoDraftState.catalogCount=0;
+    iikoDraftState.catalog=new Map();iikoDraftState.catalogList=[];iikoDraftState.catalogCount=0;
     iikoDraftInvalidate('Загружаю новый справочник iiko…');
     await iikoDraftXlsxRows(file,rows=>{
       const h=(rows[0]||[]).map(iikoDraftNorm);
@@ -49,7 +54,7 @@ async function iikoDraftLoadCatalog(){
         if(!list.some(x=>x.id===id&&x.article===article))list.push(val);
         count++;
       }
-      iikoDraftState.catalog=catalog;iikoDraftState.catalogCount=count;
+      iikoDraftState.catalog=catalog;iikoDraftState.catalogList=[...catalog.values()].flat();iikoDraftState.catalogCount=count;
     });
     iikoDraftAutoCheck();
   }catch(e){iikoDraftInvalidate('Ошибка справочника iiko: '+(e.message||e))}
@@ -59,19 +64,31 @@ function iikoDraftStore(which,end){
   return String(document.getElementById(id)?.value||'').trim();
 }
 function iikoDraftItem(item){
-  // No persistent, suggested or local name substitutions.
-  // The Excel name must exactly match the iiko catalogue name.
-  const matches=iikoDraftState.catalog.get(iikoDraftExact(item.name))||[];
-  if(matches.length!==1)return {
-    error:matches.length?'В iiko несколько товаров с точно таким названием':'Нет точного совпадения в номенклатуре iiko'
-  };
-  const match=matches[0];
-  return {name:item.name,iikoName:match.name,product:match.id||'',productArticle:match.article||'',
+  const prefix=iikoDraftPrefix(item.name),key=iikoDraftSourceKey(item.name);
+  // First try the exact name before the parenthetical composition.
+  const exact=iikoDraftState.catalog.get(iikoDraftExact(prefix))||[];
+  if(exact.length===1)return iikoDraftMatchedItem(item,exact[0]);
+  // Previously approved mapping is used only after validating the actual iiko ID/article
+  // against the currently loaded catalogue. A renamed/removed product must be reapproved.
+  const saved=iikoDraftState.mappings.get(key);
+  if(saved){
+    const options=iikoDraftState.catalogList.filter(p=>
+      saved.target_id?p.id===saved.target_id:(!p.id && p.article===saved.target_article));
+    const unique=new Map(options.map(p=>[(p.id||'article:'+p.article),p]));
+    if(unique.size===1)return iikoDraftMatchedItem(item,[...unique.values()][0]);
+    return {error:'Сохранённое соответствие отсутствует или неоднозначно в текущем справочнике iiko'};
+  }
+  return {error:exact.length>1?'В справочнике iiko несколько товаров с таким названием':
+    'Не найдено название до скобок в справочнике iiko'};
+}
+function iikoDraftMatchedItem(item,product){
+  return {name:item.name,iikoName:product.name,product:product.id||'',productArticle:product.article||'',
     amount:Number(item.quantity),weight:item.weight||'',sourceRow:item.sourceRow};
 }
-function iikoDraftMismatch(doc,item,reason){
+function iikoDraftMismatch(doc,item,reason,canMap=false){
   return {kitchen:doc.warehouse,sourceRow:Number(item.sourceRow)||0,name:String(item.name||''),
-    weight:String(item.weight||''),quantity:Number(item.quantity)||0,reason};
+    prefix:iikoDraftPrefix(item.name),weight:String(item.weight||''),
+    quantity:Number(item.quantity)||0,reason,canMap};
 }
 function iikoDraftBuildData(){
   const original=typeof morningState!=='undefined'?morningState.result:null;
@@ -87,7 +104,7 @@ function iikoDraftBuildData(){
     const lines=[],names=new Map(),resolvedSizes=new Map();
     for(const item of iikoDraftOnlyPositive(doc.items)){
       const match=iikoDraftItem(item);
-      if(match.error){mismatches.push(iikoDraftMismatch(doc,item,match.error));continue}
+      if(match.error){mismatches.push(iikoDraftMismatch(doc,item,match.error,true));continue}
       const productRef=match.product||match.productArticle;
       const size=iikoDraftNorm(item.weight);
       const uniqueness=productRef+'/'+size;
