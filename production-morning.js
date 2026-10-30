@@ -1,4 +1,4 @@
-/* Tomorrow-only morning preparation. This code NEVER writes to iiko. */
+/* Date-selected production act preparation. Does not contact iiko or post documents. */
 let morningState={book:null,fileName:'',result:null,selectedColumn:null};
 
 function morningNorm(v) {
@@ -13,6 +13,54 @@ function morningTomorrowMoscow(now=new Date()) {
   const d=new Date(Date.UTC(val('year'),val('month')-1,val('day')+1));
   return {iso:d.toISOString().slice(0,10),day:String(d.getUTCDate()).padStart(2,'0'),month:String(d.getUTCMonth()+1).padStart(2,'0'),year:String(d.getUTCFullYear())};
 }
+// All dates refer to the production day in Moscow; never use browser-local UTC conversion.
+function morningDateFromISO(iso) {
+  const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso||''));
+  if(!match)throw Error('Выберите дату приготовления.');
+  const [year,month,day]=match.slice(1).map(Number);
+  const parsed=new Date(Date.UTC(year,month-1,day));
+  if(parsed.getUTCFullYear()!==year||parsed.getUTCMonth()+1!==month||parsed.getUTCDate()!==day){
+    throw Error('Некорректная дата приготовления.');
+  }
+  return {iso:match[0],year:match[1],month:match[2],day:match[3]};
+}
+function morningInitDate() {
+  const input=document.getElementById('morningDateInput');
+  if(input&&!input.value)input.value=morningTomorrowMoscow().iso;
+}
+function morningSelectedDate() {
+  morningInitDate();
+  return morningDateFromISO(document.getElementById('morningDateInput')?.value);
+}
+function morningDateChanged() {
+  if(!morningState.book){
+    const status=document.getElementById('morningStatus');
+    if(status)status.textContent='Дата выбрана. Получите план с MAIN или загрузите Excel ниже.';
+    return;
+  }
+  morningBuildSelectedDate();
+}
+function morningBuildSelectedDate() {
+  const status=document.getElementById('morningStatus');
+  const area=document.getElementById('morningPreview');
+  const picker=document.getElementById('morningColumnPicker');
+  const exportBtn=document.getElementById('morningExportBtn');
+  morningState.result=null;
+  if(area)area.innerHTML='';
+  if(exportBtn)exportBtn.hidden=true;
+  if(picker)picker.hidden=true;
+  try{
+    const date=morningSelectedDate();
+    if(!morningState.book)throw Error('Сначала получите Excel с MAIN или выберите файл вручную.');
+    if(status)status.textContent='Ищу лист за '+date.day+'.'+date.month+'.'+date.year+' и крайний правый итоговый столбец…';
+    morningState.result=morningAnalyze(morningState.book,date,null);
+    morningPrintResult();
+  }catch(e){
+    if(status)status.textContent='Не удалось подготовить акты: '+(e.message||e);
+  }
+}
+document.addEventListener('DOMContentLoaded',morningInitDate);
+
 function morningMatchSheet(name,date){
   const s=String(name);
   const pattern=new RegExp('(^|\\D)'+Number(date.day)+'\\s*[.\\/-]\\s*'+Number(date.month)+'(?:\\s*[.\\/-]\\s*(\\d{2,4}))?(?!\\d)','g');
@@ -178,9 +226,7 @@ function morningPrintResult(){
 function morningPrepareBook(book,name){
   morningState.book=book;morningState.fileName=name||'План производства.xlsx';
   morningState.result=null;morningState.selectedColumn=null;
-  document.getElementById('morningStatus').textContent='Ищу завтрашнюю вкладку и крайний правый итоговый столбец…';
-  try{morningState.result=morningAnalyze(book,morningTomorrowMoscow(),null);morningPrintResult()}
-  catch(e){document.getElementById('morningStatus').textContent='Проверка структуры: '+(e.message||e);document.getElementById('morningPreview').innerHTML='';document.getElementById('morningExportBtn').hidden=true}
+  morningBuildSelectedDate();
 }
 function morningPrepareFromBytes(bytes,name){
   if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
@@ -192,7 +238,7 @@ function morningRetryColumn(){
   const value=document.getElementById('morningColumnPicker').value;
   if(value==='')return;
   try{
-    morningState.result=morningAnalyze(morningState.book,morningTomorrowMoscow(),Number(value));
+    morningState.result=morningAnalyze(morningState.book,morningSelectedDate(),Number(value));
     morningPrintResult();
     document.getElementById('morningStatus').textContent='Столбец выбран вручную для проверки. Не отправляйте акты в iiko до сверки.';
   }catch(e){document.getElementById('morningStatus').textContent='Ошибка: '+(e.message||e)}

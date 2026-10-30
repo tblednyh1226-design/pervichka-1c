@@ -68,29 +68,30 @@ async function planBridgeDeviceStatus() {
     if(el)el.textContent='Не удалось проверить связь: '+(e.message||e);
   }
 }
-function planBridgeTomorrow() {
-  const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',day:'2-digit',month:'2-digit',year:'numeric'}).formatToParts(new Date());
-  const get=t=>Number(p.find(x=>x.type===t)?.value);
-  const d=new Date(Date.UTC(get('year'),get('month')-1,get('day')+1));
-  return {day:String(d.getUTCDate()).padStart(2,'0'),month:String(d.getUTCMonth()+1).padStart(2,'0'),year:String(d.getUTCFullYear())};
-}
 function planBridgePreview(arraybuffer) {
   if(typeof XLSX==='undefined')throw new Error('Модуль Excel не загружен');
-  if(typeof morningPrepareFromBytes==='function')morningPrepareFromBytes(arraybuffer,'План производства с MAIN');
-  const book=XLSX.read(arraybuffer,{type:'array',cellStyles:true});
-  const target=planBridgeTomorrow();
-  const expected=target.day+'.'+target.month;
-  const sheet=book.SheetNames.find(name=>name.includes(expected)||name.includes(target.day+'/'+target.month));
+  const book=XLSX.read(arraybuffer,{type:'array',cellStyles:true,cellDates:true});
+  if(typeof morningPrepareBook==='function')morningPrepareBook(book,'План производства с MAIN');
+  const target=typeof morningSelectedDate==='function'?morningSelectedDate():morningTomorrowMoscow();
   const el=document.getElementById('planBridgePreview');
+  const formatted=target.day+'.'+target.month+'.'+target.year;
+  let sheet;
+  try{
+    sheet=typeof morningDateBook==='function'?morningDateBook(book,target):
+      book.SheetNames.find(name=>name.includes(target.day+'.'+target.month));
+  }catch(e){
+    el.textContent='Исходный Excel получен, но за '+formatted+' лист не найден: '+(e.message||e);
+    return;
+  }
   if(!sheet) {
-    el.textContent='Excel получен. Лист на '+expected+' не найден. Вкладки: '+book.SheetNames.join(', ')+'.';
+    el.textContent='Исходный Excel получен, но лист за '+formatted+' отсутствует.';
     return;
   }
   const ws=book.Sheets[sheet];
   const range=ws['!ref']?XLSX.utils.decode_range(ws['!ref']):null;
   const rows=range?range.e.r-range.s.r+1:0;
   const cols=range?range.e.c-range.s.c+1:0;
-  el.textContent='Excel получен. Вкладка на завтра: «'+sheet+'». Размер: '+rows+' строк, '+cols+' столбцов. Обработка голубого столбца и распределение блюд пока не включены — сначала проверяем передачу исходного файла.';
+  el.textContent='Исходный Excel получен. Лист за '+formatted+': «'+sheet+'». Размер: '+rows+' строк, '+cols+' столбцов. Акты за эту дату — в блоке ниже.';
 }
 function planBridgeDownload() {
   if(!planBridgeBytes)return;
