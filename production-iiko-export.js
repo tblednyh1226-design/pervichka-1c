@@ -263,6 +263,10 @@ function iikoDraftAutoCheck(){
     iikoDraftInvalidate('Акты сформированы. Для автоматической сверки загрузите актуальный справочник номенклатуры iiko.');
     return;
   }
+  if(!iikoDraftState.mappingLoaded){
+    iikoDraftInvalidate(iikoDraftState.mappingError||'Загружаю запомненные соответствия iiko…');
+    return;
+  }
   return iikoDraftCheck();
 }
 function iikoDraftCheck(){
@@ -276,18 +280,30 @@ function iikoDraftCheck(){
     iikoDraftState.signature=data.signature;
     const sum=d=>d.items.reduce((n,x)=>n+x.amount,0);
     const heading=data.documents.map(d=>'<div><b>Акт '+iikoDraftHtml(d.warehouseCode)+'</b> · '+iikoDraftHtml(d.warehouse)+' · '+d.items.length+' совпавших поз. · '+sum(d)+' шт. · NEW (без проведения)</div>').join('');
-    const rowHTML=data.mismatches.map(x=>'<tr><td>'+iikoDraftHtml(x.kitchen)+'</td><td>'+iikoDraftHtml(data.sourceSheet)+'</td><td>'+x.sourceRow+'</td><td>'+iikoDraftHtml(x.name)+'</td><td>'+iikoDraftHtml(x.weight)+'</td><td>'+x.quantity+'</td><td>'+iikoDraftHtml(x.reason)+'</td></tr>').join('');
+    const rowHTML=data.mismatches.map((x,i)=>{
+      const controls=x.canMap?'<div><input type="search" id="iikoDraftFind-'+i+
+        '" placeholder="Найти позицию iiko по названию / артикулу" oninput="iikoDraftFilterChoices('+i+')">'+
+        '<select id="iikoDraftChoose-'+i+'"><option value="">Выберите iiko</option></select>'+
+        '<button onclick="iikoDraftSaveChoice('+i+')">Подтвердить и запомнить</button></div>':'';
+      return '<tr><td>'+iikoDraftHtml(x.kitchen)+'</td><td>'+
+        iikoDraftHtml(data.sourceSheet)+'</td><td>'+x.sourceRow+'</td><td>'+
+        iikoDraftHtml(x.name)+'</td><td>'+iikoDraftHtml(x.prefix)+'</td><td>'+
+        iikoDraftHtml(x.reason)+controls+'</td></tr>';
+    }).join('');
     const mismatchHTML=data.mismatches.length?
-      '<h4>Номенклатура не совпадает: '+data.mismatches.length+' строк</h4>'+
-      '<p>Администратор исправляет названия в исходном Excel точно по справочнику iiko, сохраняет файл и загружает его повторно. Подмены названий не сохраняются.</p>'+
-      '<div class="tablewrap"><table class="nomtable"><thead><tr><th>Кухня</th><th>Лист</th><th>Строка</th><th>В плане</th><th>Вес / объём</th><th>Кол-во</th><th>Причина</th></tr></thead><tbody>'+rowHTML+'</tbody></table></div>':
-      '<p>Все названия блюд точно совпадают с загруженным справочником iiko.</p>';
+      '<h4>Требуется сопоставление: '+data.mismatches.length+' строк</h4>'+
+      '<p>Сначала сравнивается название до первой скобки (состав игнорируется). Для незнакомых блюд выберите правильную позицию iiko и нажмите «Подтвердить и запомнить». Общие соответствия доступны другим браузерам, подключённым к MAIN.</p>'+
+      '<div class="tablewrap"><table class="nomtable"><thead><tr><th>Кухня</th><th>Лист</th><th>Строка</th><th>Название из плана</th><th>До скобок</th><th>Соответствие iiko</th></tr></thead><tbody>'+rowHTML+'</tbody></table></div>':
+      '<p>Все блюда сопоставлены с текущим справочником iiko (название до скобок или подтверждённое соответствие).</p>';
     const otherHTML=data.issues.length?'<p style="color:#b42318"><b>Другие замечания:</b></p><ul>'+data.issues.map(x=>'<li>'+iikoDraftHtml(x)+'</li>').join('')+'</ul>':'';
     const result=document.getElementById('iikoDraftResult');
     if(result)result.innerHTML=heading+mismatchHTML+otherHTML;
+    for(let i=0;i<data.mismatches.length;i++){
+      if(data.mismatches[i].canMap)iikoDraftFilterChoices(i);
+    }
     const missing=data.mismatches.length;
     document.getElementById('iikoDraftStatus').textContent=missing?
-      'Не совпадает номенклатура: '+missing+' строк. Исправь исходный Excel и загрузи его повторно.':
+      'Требуется выбрать соответствия iiko: '+missing+' строк. Используй поиск, затем «Подтвердить и запомнить».':
       data.issues.length?'Есть замечания: '+data.issues.length+'. Пакет не готов.':
       'Названия совпали. Два акта готовы к скачиванию в тестовом пакете (без отправки в iiko).';
     const btn=document.getElementById('iikoDraftDownload');
@@ -306,10 +322,10 @@ function iikoDraftDownloadMismatches(){
   if(!data.length)throw Error('Несоответствий нет. Проверка выполняется автоматически после загрузки файлов.');
   if(typeof XLSX==='undefined')throw Error('Не загружен модуль Excel.');
   const r=morningState.result;
-  const rows=[['Дата','Лист Excel','Кухня','Строка Excel','Наименование в плане','Вес / объём','Количество','Несоответствие']];
-  for(const x of data)rows.push([r.date.iso,r.sheet,x.kitchen,x.sourceRow,x.name,x.weight,x.quantity,x.reason]);
+  const rows=[['Дата','Лист Excel','Кухня','Строка Excel','Наименование в плане','Название до скобок','Вес / объём','Количество','Причина']];
+  for(const x of data)rows.push([r.date.iso,r.sheet,x.kitchen,x.sourceRow,x.name,x.prefix,x.weight,x.quantity,x.reason]);
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols']=[{wch:13},{wch:18},{wch:20},{wch:14},{wch:50},{wch:16},{wch:14},{wch:72}];
+  ws['!cols']=[{wch:13},{wch:18},{wch:20},{wch:14},{wch:50},{wch:42},{wch:16},{wch:14},{wch:72}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Не совпадает с iiko');
   XLSX.writeFile(wb,'несовпадения_iiko_'+r.date.iso+'.xlsx');
@@ -329,7 +345,7 @@ function iikoDraftXml(doc){
   return '<?xml version="1.0" encoding="UTF-8"?>\n<document><status>NEW</status><dateIncoming>'+iikoDraftEsc(doc.dateIncoming)+'</dateIncoming><storeFrom>'+iikoDraftEsc(doc.storeFrom)+'</storeFrom><storeTo>'+iikoDraftEsc(doc.storeTo)+'</storeTo><comment>Помогатор: проект акта приготовления, без проведения</comment><items>'+lines+'</items></document>';
 }
 async function iikoDraftDownload(){
-  if(!iikoDraftState.ready)throw Error('Исправь несовпадения в исходном Excel, загрузи его повторно и сверяй заново.');
+  if(!iikoDraftState.ready)throw Error('Сначала сопоставьте неподтверждённые блюда со справочником iiko.');
   if(typeof JSZip==='undefined')throw Error('Не загружен модуль ZIP');
   const zip=new JSZip();
   const json={schema:'pomogator.iiko.production-draft.v2',mode:'offline-test',endpoint:'/resto/api/documents/import/productionDocument',posted:false,
