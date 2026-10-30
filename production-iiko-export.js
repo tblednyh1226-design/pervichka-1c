@@ -92,14 +92,18 @@ function iikoDraftBuildData(){
     const key=idx===0?'BK':'PK';
     const from=iikoDraftStore(key,'from'),to=iikoDraftStore(key,'to');
     if(!from||!to)issues.push((key==='BK'?'Бухара кухня':'Правда кухня')+': укажи склад списания сырья и склад выпуска iiko.');
-    const lines=[],names=new Set();
+    const lines=[],names=new Set(),resolvedSizes=new Map();
     for(const item of iikoDraftOnlyPositive(doc.items)){
       const match=iikoDraftItem(item);
       if(match.error){issues.push(match.error);continue}
-      // Never silently collapse distinct plan rows / compote volume sizes.
-      const uniqueness=(match.product||match.productArticle)+'/'+String(item.weight||'');
+      // Keep separate compote sizes: identical iiko product must not be used for different volumes.
+      const productRef=match.product||match.productArticle;
+      const size=iikoDraftNorm(item.weight);
+      const uniqueness=productRef+'/'+size;
       if(names.has(uniqueness))issues.push('Повтор блюда с одинаковым размером: '+item.name+'. Требуется сверка.');
-      names.add(uniqueness);
+      if(resolvedSizes.has(productRef)&&resolvedSizes.get(productRef)!==size)
+        issues.push('Разные веса/объёмы привязаны к одному блюду iiko: '+item.name+' ('+resolvedSizes.get(productRef)+' и '+size+'). Нужны отдельные позиции.');
+      names.add(uniqueness);resolvedSizes.set(productRef,size);
       lines.push(match);
     }
     if(!lines.length)issues.push(doc.warehouse+': нет подтверждённых строк.');
