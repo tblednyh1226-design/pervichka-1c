@@ -7,6 +7,9 @@ function planBridgeStatus(message, bad) {
   if (el) { el.textContent=message; el.style.color=bad?'#b42318':''; }
 }
 const planGuestApi=SUPABASE_URL+'/functions/v1/plan-bridge-guest';
+const planGuestBackupApi='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-main-plan-relay';
+const planGuestBackupKey='sb_publishable_rcvNssgN4_dPnVUpjU0bjQ_1cEWsA52';
+let planGuestPreferredRoute='primary';
 function planGuestStored(){
   const deviceId=localStorage.getItem('pomogator_guest_device_id')||'';
   const token=localStorage.getItem('pomogator_guest_browser_token')||'';
@@ -42,31 +45,55 @@ function planBridgeToggleCodeVisibility(){
   el.type=el.type==='password'?'text':'password';
   planBridgeRefreshSavedCode();
 }
-async function planGuestFetch(action,extra={},isClaim=false){
+// Use the separate Supabase project when a browser's connection to the
+// primary project times out. Never automatically resend an uncertain request.
+async function planGuestTransport(route,action,extra={},isClaim=false,download=false){
   const {deviceId,token}=planGuestStored();
-  if(!isClaim && (!deviceId||!token))throw new Error('Сначала подключите MAIN с помощью кода из программы на компьютере');
-  const headers={'Content-Type':'application/json','apikey':SUPABASE_KEY};
-  if(!isClaim){
-    headers['x-device-id']=deviceId;
-    headers['x-browser-token']=token;
-  }
-  // The request API must never leave the UI stuck indefinitely on "Отправляю запрос".
-  const timeoutMs=action==='request'?12000:20000;
-  const controller=new AbortController();
-  const timeoutId=setTimeout(()=>controller.abort(),timeoutMs);
-  let rsp;
+  if(!isClaim&&(!deviceId||!token))throw Error('Сначала подключите MAIN с помощью кода из программы на компьютере');
+  const headers={'Content-Type':'application/json',
+    'apikey':route==='relay'?planGuestBackupKey:SUPABASE_KEY};
+  if(!isClaim){headers['x-device-id']=deviceId;headers['x-browser-token']=token}
+  const timeoutMs=download?55000:route==='primary'?(action==='request'?12000:8000):22000;
+  const controller=new AbortController(),timeoutId=setTimeout(()=>controller.abort(),timeoutMs);
+  let response;
   try{
-    rsp=await fetch(planGuestApi,{
+    response=await fetch(route==='relay'?planGuestBackupApi:planGuestApi,{
       method:'POST',headers,body:JSON.stringify({action,...extra}),
       cache:'no-store',signal:controller.signal
     });
   }catch(e){
-    if(e?.name==='AbortError')throw new Error('Сервер не ответил за '+(timeoutMs/1000)+' секунд. MAIN мог уже получить задание. Нажми «Открыть последний готовый файл», чтобы проверить результат без повторного запроса.');
-    throw e;
+    const err=new Error(e?.name==='AbortError'?
+      'Сервер не ответил за '+(timeoutMs/1000)+' секунд':
+      'Нет связи с сервером: '+(e.message||e));
+    err.planTransport=true;
+    throw err;
   }finally{clearTimeout(timeoutId)}
-  const json=await rsp.json().catch(()=>({ok:false,error:'Ошибка ответа сервера'}));
-  if(!rsp.ok||!json.ok)throw new Error(json.error||('Ошибка сервера '+rsp.status));
-  return json;
+  if(download){
+    if(!response.ok)throw Error('Резервный сервер не отдал Excel (HTTP '+response.status+')');
+    return response;
+  }
+  const data=await response.json().catch(()=>({ok:false,error:'Некорректный ответ сервера'}));
+  if(!response.ok||!data.ok)throw Error(data.error||'Ошибка сервера '+response.status);
+  return data;
+}
+async function planGuestFetch(action,extra={},isClaim=false){
+  if(planGuestPreferredRoute==='relay')
+    return planGuestTransport('relay',action,extra,isClaim);
+  try{
+    return await planGuestTransport('primary',action,extra,isClaim);
+  }catch(e){
+    if(!e.planTransport)throw e;
+    planGuestPreferredRoute='relay';
+    if(action==='request')
+      throw Error('Основной сервер не подтвердил создание задания. Повторно его не отправляю, чтобы не создать дубль. Нажмите «Открыть последний готовый файл»; резервный канал уже включён.');
+    const status=document.getElementById('planBridgeStatus');
+    if(status)status.textContent='Основной сервер не ответил. Проверяю через резервный канал…';
+    try{return await planGuestTransport('relay',action,extra,isClaim)}
+    catch(other){
+      throw Error('Основной сервер недоступен ('+(e.message||e)+
+        '), резервный канал: '+(other.message||other));
+    }
+  }
 }
 async function planBridgeCall(action,extra={}){ return planGuestFetch(action,extra); }
 async function planBridgePair(){
@@ -150,16 +177,34 @@ function planBridgeDownload() {
   a.href=url;a.download=planBridgeFileName;document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
-async function planBridgeImportDownload(url,label){
+async function planBridgeImportDownload(url,label,jobId){
   if(!url)throw Error('Сервер не предоставил адрес Excel.');
-  planBridgeStatus('Скачиваю Excel с сервера…');
-  const response=await fetch(url,{cache:'no-store'});
-  if(!response.ok)throw Error('Не удалось скачать Excel: HTTP '+response.status);
+  let response;
+  // A client may reach the backup Edge Function but not the original
+  // Storage domain. The relay revalidates the MAIN token and job ownership.
+  if(planGuestPreferredRoute!=='relay'){
+    planBridgeStatus('Скачиваю Excel с сервера…');
+    const controller=new AbortController();
+    const timeoutId=setTimeout(()=>controller.abort(),15000);
+    try{
+      response=await fetch(url,{cache:'no-store',signal:controller.signal});
+      if(!response.ok)throw Error('HTTP '+response.status);
+    }catch(e){
+      if(!jobId)throw Error('Не удалось получить файл: '+(e.message||e));
+      planGuestPreferredRoute='relay';
+    }finally{clearTimeout(timeoutId)}
+  }
+  if(!response){
+    if(!jobId)throw Error('Для резервного скачивания неизвестен номер задания');
+    planBridgeStatus('Скачиваю готовый Excel через резервный сервер…');
+    response=await planGuestTransport('relay','download',{job_id:jobId},false,true);
+  }
   planBridgeBytes=await response.arrayBuffer();
+  if(!planBridgeBytes.byteLength)throw Error('Получен пустой Excel');
   planBridgeFileName='ПЛАН ПРОИЗВОДСТВА.xlsx';
   const download=document.getElementById('planBridgeDownloadBtn');
   if(download)download.hidden=false;
-  planBridgeStatus('Excel скачан ('+(planBridgeBytes.byteLength/1048576).toFixed(1)+' МБ). Открываю выбранный день…');
+  planBridgeStatus('Excel получен ('+(planBridgeBytes.byteLength/1048576).toFixed(1)+' МБ). Открываю выбранный день…');
   await new Promise(resolve=>setTimeout(resolve,0));
   planBridgePreview(planBridgeBytes);
   planBridgeStatus(label+' В iiko ничего не передавалось.');
@@ -182,7 +227,7 @@ async function planBridgeLoadLatest(){
     if(!latest.available)throw Error('На сервере пока нет готового файла от MAIN.');
     const finished=latest.finished_at?new Date(latest.finished_at)
       .toLocaleString('ru-RU',{timeZone:'Europe/Moscow',hour12:false}):'время не указано';
-    await planBridgeImportDownload(latest.download_url,'Открыт последний готовый файл MAIN от '+finished+' (Москва).');
+    await planBridgeImportDownload(latest.download_url,'Открыт последний готовый файл MAIN от '+finished+' (Москва).',latest.job_id);
   }catch(e){planBridgeStatus('Ошибка получения готового файла: '+(e.message||e),true)}
   finally{planBridgeBusy=false;if(btn)btn.disabled=false;}
 }
@@ -205,7 +250,7 @@ async function planBridgeRequest() {
       const r=await planBridgeCall('status',{job_id:job.job_id});
       if(r.status==='failed')throw new Error('MAIN: '+(r.error||'Ошибка чтения файла'));
       if(r.status==='completed'){
-        await planBridgeImportDownload(r.download_url,'Готово: свежий Excel получен с MAIN.');
+        await planBridgeImportDownload(r.download_url,'Готово: свежий Excel получен с MAIN.',job.job_id);
         await planBridgeDeviceStatus();
         return;
       }
