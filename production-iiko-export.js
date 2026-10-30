@@ -33,6 +33,12 @@ function iikoDraftXlsxRows(file,callback){
 }
 async function iikoDraftLoadCatalog(){
   const file=document.getElementById('iikoDraftCatalog')?.files?.[0];if(!file)return;
+  // Uploaded XLSX is not a live iiko catalogue; do not allow real write with stale IDs.
+  if(typeof iikoLiveState!=='undefined'){
+    iikoLiveState.connected=false;
+    if(typeof iikoLiveStatus==='function')iikoLiveStatus('Выбран ручной справочник Excel. Для реальной отправки ещё раз загрузите номенклатуру непосредственно из iiko.');
+    if(typeof iikoLiveRefreshButtons==='function')iikoLiveRefreshButtons();
+  }
   try{
     iikoDraftState.catalog=new Map();iikoDraftState.catalogList=[];iikoDraftState.catalogCount=0;
     iikoDraftInvalidate('Загружаю новый справочник iiko…');
