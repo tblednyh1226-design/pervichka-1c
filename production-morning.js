@@ -283,8 +283,9 @@ function morningPrintResult(){
   if(r.needsColumn){area.innerHTML='<p>Вкладка <b>'+morningEscape(r.sheet)+'</b> найдена. Не удалось определить крайний правый столбец итоговых количеств. Автоматического выбора нет.</p>';status.textContent='Требуется проверить итоговый столбец.';return}
   const cards=r.documents.map(d=>{
     const sum=d.items.reduce((s,x)=>s+x.quantity,0);
-    const body=d.items.map(x=>'<tr><td>'+morningEscape(x.name)+'</td><td>'+morningEscape(x.weight||'')+'</td><td>'+morningEscape(x.quantity)+'</td></tr>').join('');
-    return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable"><thead><tr><th>Блюдо</th><th>Вес / объём</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
+    // Weight is kept in the source records for validation, but not displayed in the act preview.
+    const body=d.items.map(x=>'<tr><td>'+morningEscape(x.name)+'</td><td>'+morningEscape(x.quantity)+'</td></tr>').join('');
+    return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable morning-acts-table"><thead><tr><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
   }).join('');
   const warnings=r.warnings.length?'<p style="color:#9d4b17"><b>Проверить:</b> '+r.warnings.map(morningEscape).join('; ')+'</p>':'';
   area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Крайний правый итоговый столбец: <b>'+morningEscape(r.selected.label)+'</b>.</p>'+warnings+cards;
