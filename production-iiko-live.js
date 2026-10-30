@@ -1,58 +1,31 @@
 /* Production draft upload to the existing, privately configured iikoServer.
    Each click sends ONE NEW unposted act. No automatic retries or document-number lookups. */
 const IIKO_LIVE_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-drafts';
-const iikoLiveState={busy:false,stores:[],connected:false,receipts:[],submitted:new Set(),guestClient:null};
+const iikoLiveState={busy:false,stores:[],connected:false,receipts:[],submitted:new Set()};
 function iikoLiveStatus(text,isError=false){
   const el=document.getElementById('iikoLiveStatus');
   if(el){el.textContent=text;el.style.color=isError?'#b42318':''}
 }
-// For production planning, the saved 32-character MAIN pairing is mandatory.
-// To satisfy the existing server requirement for a valid Supabase JWT without
-// an email/password prompt, create an anonymous *authenticated* session.
-// This does NOT bypass the server's additional MAIN device-token verification.
+// The paired MAIN code is the only credential needed for this guest workflow.
+// The server validates this 32-character secret on EVERY catalog/upload request.
 async function iikoLiveCall(action,extra={}){
-  if(typeof sb==='undefined')throw Error('Модуль безопасного сеанса не загружен.');
   const main=typeof planGuestStored==='function'?planGuestStored():null;
   if(!main?.deviceId||!/^[0-9a-f]{32}$/i.test(String(main.token||'')))
     throw Error('Подключите MAIN с сохранённым 32-символьным кодом.');
-  // Never sign the entire bookkeeping app into an anonymous account.
-  // A separate in-memory Supabase client holds the iiko-only guest session.
-  const current=await sb.auth.getSession();
-  if(current.error)throw Error('Не удалось проверить сеанс Помогатора: '+current.error.message);
-  let session=current.data?.session;
-  if(!session){
-    if(!iikoLiveState.guestClient){
-      if(typeof supabase==='undefined'||typeof supabase.createClient!=='function')
-        throw Error('Не загружен модуль гостевого доступа.');
-      iikoLiveState.guestClient=supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
-        auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}
-      });
-    }
-    const guestAuth=iikoLiveState.guestClient.auth;
-    const cached=await guestAuth.getSession();
-    session=cached?.data?.session||null;
-    if(!session){
-      iikoLiveStatus('Подключаю гостевой сеанс для работы с iiko без email и пароля…');
-      const result=await guestAuth.signInAnonymously();
-      if(result.error){
-        const disabled=result.error.code==='anonymous_provider_disabled'||
-          /anonymous.*(disabled|not enabled|not allowed)/i.test(result.error.message||'');
-        if(disabled)throw Error('В Supabase отключён гостевой вход. Пробная отправка не выполнялась. Требуется включить безопасный гостевой режим после проверки прав доступа.');
-        throw Error('Не удалось создать гостевой сеанс: '+result.error.message);
-      }
-      session=result.data?.session;
-    }
-  }
-  if(!session?.access_token)throw Error('Сервер не создал действующий гостевой сеанс.');
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),90000);
   try{
-    const r=await fetch(IIKO_LIVE_ENDPOINT,{method:'POST',cache:'no-store',
-      headers:{'Content-Type':'application/json','authorization':'Bearer '+session.access_token,
+    const response=await fetch(IIKO_LIVE_ENDPOINT,{
+      method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json',
         'x-device-id':main.deviceId,'x-browser-token':main.token},
-      body:JSON.stringify({action,...extra}),signal:controller.signal});
-    const result=await r.json().catch(()=>({ok:false,error:'Сервер iiko вернул ответ неизвестного формата'}));
-    if(!r.ok||!result.ok)throw Error(result.error||'Ошибка соединения с iiko (HTTP '+r.status+')');
+      body:JSON.stringify({action,...extra}),signal:controller.signal
+    });
+    const result=await response.json().catch(()=>({
+      ok:false,error:'Сервер iiko вернул ответ неизвестного формата'
+    }));
+    if(!response.ok||!result.ok)
+      throw Error(result.error||'Ошибка соединения с iiko (HTTP '+response.status+')');
     return result;
   }catch(e){
     if(e?.name==='AbortError')
