@@ -107,8 +107,11 @@ function iikoDraftBuildData(){
       lines.push(match);
     }
     if(!lines.length)issues.push(doc.warehouse+': нет подтверждённых строк.');
-    const number='POM-'+date.replace(/-/g,'')+'-'+key;
-    documents.push({type:'production',documentNumber:number,dateIncoming:date+'T09:00:00',status:'NEW',warehouse:doc.warehouse,storeFrom:from,storeTo:to,items:lines});
+    // Do not reserve, calculate or transmit a document number.
+    // iikoServer is expected to assign a number when creating a NEW document.
+    // This needs a live environment check before enabling actual writes.
+    documents.push({type:'production',warehouseCode:key,dateIncoming:date+'T09:00:00',status:'NEW',
+      numbering:'iiko-auto',warehouse:doc.warehouse,storeFrom:from,storeTo:to,items:lines});
   }
   const signature=iikoDraftHashText(JSON.stringify(documents));
   return {date,sourceSheet:original.sheet,sourceColumn:original.selected?.label||'',documents,issues,signature};
@@ -122,7 +125,7 @@ function iikoDraftCheck(){
     iikoDraftState.ready=data.issues.length===0;
     iikoDraftState.signature=data.signature;
     const sum=d=>d.items.reduce((n,x)=>n+x.amount,0);
-    const heading=data.documents.map(d=>'<div><b>'+iikoDraftHtml(d.documentNumber)+'</b> · '+iikoDraftHtml(d.warehouse)+' · '+d.items.length+' подтверждённых поз. · '+sum(d)+' шт. · NEW (без проведения)</div>').join('');
+    const heading=data.documents.map(d=>'<div><b>Акт '+iikoDraftHtml(d.warehouseCode)+'</b> · '+iikoDraftHtml(d.warehouse)+' · номер назначает iiko · '+d.items.length+' поз. · '+sum(d)+' шт. · NEW (без проведения)</div>').join('');
     const warnings=data.issues.length?'<p style="color:#b42318"><b>Нужно исправить ('+data.issues.length+'):</b></p><ul>'+data.issues.slice(0,60).map(x=>'<li>'+iikoDraftHtml(x)+'</li>').join('')+'</ul>':'<p>Все позиции сопоставлены. Готов тестовый пакет из двух актов. Реальная отправка пока отключена.</p>';
     const result=document.getElementById('iikoDraftResult');
     if(result)result.innerHTML=heading+warnings;
@@ -139,17 +142,19 @@ function iikoDraftXml(doc){
     const ref=x.product?'<product>'+iikoDraftEsc(x.product)+'</product>':'<productArticle>'+iikoDraftEsc(x.productArticle)+'</productArticle>';
     return '<item><num>'+(i+1)+'</num><amount>'+x.amount+'</amount>'+ref+'</item>';
   }).join('');
-  return '<?xml version="1.0" encoding="UTF-8"?>\n<document><status>NEW</status><documentNumber>'+iikoDraftEsc(doc.documentNumber)+'</documentNumber><dateIncoming>'+iikoDraftEsc(doc.dateIncoming)+'</dateIncoming><storeFrom>'+iikoDraftEsc(doc.storeFrom)+'</storeFrom><storeTo>'+iikoDraftEsc(doc.storeTo)+'</storeTo><comment>Помогатор: проект акта приготовления, без проведения</comment><items>'+lines+'</items></document>';
+  // documentNumber intentionally omitted: the server, not the browser, assigns numbers.
+  return '<?xml version="1.0" encoding="UTF-8"?>\n<document><status>NEW</status><dateIncoming>'+iikoDraftEsc(doc.dateIncoming)+'</dateIncoming><storeFrom>'+iikoDraftEsc(doc.storeFrom)+'</storeFrom><storeTo>'+iikoDraftEsc(doc.storeTo)+'</storeTo><comment>Помогатор: проект акта приготовления, без проведения</comment><items>'+lines+'</items></document>';
 }
 async function iikoDraftDownload(){
   if(!iikoDraftState.ready)throw Error('Сначала устрани замечания проверки.');
   if(typeof JSZip==='undefined')throw Error('Не загружен модуль ZIP');
   const zip=new JSZip();
-  const json={schema:'pomogator.iiko.production-draft.v1',mode:'offline-test',endpoint:'/resto/api/documents/import/productionDocument',posted:false,
+  const json={schema:'pomogator.iiko.production-draft.v2',mode:'offline-test',endpoint:'/resto/api/documents/import/productionDocument',posted:false,
+    numberPolicy:'omit-documentNumber',automaticNumberUnverified:true,
     createdAt:new Date().toISOString(),signature:iikoDraftState.signature,documents:iikoDraftState.documents};
   zip.file('manifest.json',JSON.stringify(json,null,2));
-  for(const d of iikoDraftState.documents)zip.file(d.documentNumber+'.xml',iikoDraftXml(d));
-  zip.file('README.txt','ТЕСТОВЫЙ ПАКЕТ. Содержит два акта приготовления со статусом NEW. Не отправлен в iiko, не проведён. Повторная отправка того же номера может создать дубликаты; проверяйте наличие документа в iiko.');
+  for(const d of iikoDraftState.documents)zip.file('production-'+d.warehouseCode+'.xml',iikoDraftXml(d));
+  zip.file('README.txt','ТЕСТОВЫЙ ПАКЕТ. Два акта приготовления NEW без проведения и без номера. Поле documentNumber отсутствует: автоматическая нумерация iikoServer должна быть подтверждена на вашем сервере до включения отправки. Никакой проверки наличия существующих актов не выполняется. Повторная отправка может создать дубликаты. В iiko ничего не отправлено.');
   const content=await zip.generateAsync({type:'blob'});
   const url=URL.createObjectURL(content),a=document.createElement('a');
   a.href=url;a.download='iiko-draft-'+iikoDraftState.documents[0].dateIncoming.slice(0,10)+'.zip';
