@@ -1,5 +1,5 @@
 /* Production plan → iiko preparation; does not contact iiko or post documents. */
-let productionBook=null,productionRows=[],productionDocuments=[],productionFileName='',productionSheetName='';
+let productionBook=null,productionBytes=null,productionRows=[],productionDocuments=[],productionFileName='',productionSheetName='';
 const productionSkip=/^(всего|итого|итого фасовка|вес|цена|разница|покупатели|№|наименование|меню)$/i;
 const productionGroups=/^(холодные закуски|первые блюда|блюда для завтраков|вторые\s+блюда|гарниры|напитки|хлеб|дополнительный ассортимент|выпечка|комплексные обеды)$/i;
 function productionNorm(v){return String(v??'').trim().replace(/\s+/g,' ').toLowerCase().replace(/ё/g,'е')}
@@ -15,13 +15,17 @@ async function productionOpen(){
   document.getElementById('prodstatus').textContent='Читаю Excel…';
   // A new import attempt replaces the previous plan, even if the new file is damaged.
   // Never leave old acts ready for download after a failed replacement.
-  productionBook=null;
-  if(typeof morningState!=='undefined'){morningState.book=null;morningState.result=null;}
+  productionBook=null;productionBytes=null;
+  if(typeof morningState!=='undefined'){morningState.book=null;morningState.bytes=null;morningState.result=null;}
   if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Читаю новый Excel. Предыдущие акты сняты с подготовки.');
   if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
   const bytes=await f.arrayBuffer();
-  productionBook=XLSX.read(bytes,{type:'array',cellDates:true,cellStyles:true});productionFileName=f.name;
-  if(typeof morningPrepareBook==='function')morningPrepareBook(productionBook,f.name);
+  productionBytes=bytes;
+  const metadata=XLSX.read(bytes,{type:'array',bookSheets:true});
+  if(!metadata.SheetNames?.length)throw Error('Книга Excel не содержит листов.');
+  productionBook={SheetNames:metadata.SheetNames,Sheets:{}};
+  productionFileName=f.name;
+  if(typeof morningPrepareBook==='function')morningPrepareBook(productionBook,f.name,bytes);
   document.getElementById('prodsheet').innerHTML=productionBook.SheetNames.map((name,i)=>'<option value="'+i+'">'+productionText(name)+'</option>').join('');
   document.getElementById('prodsheet').value=String(productionBook.SheetNames.length-1);
   productionSelectSheet();
@@ -31,6 +35,16 @@ function productionSelectSheet(){
  if(!productionBook)return;
  const i=Number(document.getElementById('prodsheet').value);
  productionSheetName=productionBook.SheetNames[i];
+ if(!productionSheetName)throw Error('Выберите лист Excel.');
+ if(!productionBook.Sheets[productionSheetName]){
+   if(!productionBytes)throw Error('Исходный Excel не загружен.');
+   const selected=XLSX.read(productionBytes,{
+     type:'array',sheets:productionSheetName,cellDates:true,cellStyles:false,
+     cellFormula:false,cellHTML:false,cellText:false
+   });
+   if(!selected.Sheets?.[productionSheetName])throw Error('Не удалось открыть лист '+productionSheetName);
+   productionBook.Sheets[productionSheetName]=selected.Sheets[productionSheetName];
+ }
  productionRows=XLSX.utils.sheet_to_json(productionBook.Sheets[productionSheetName],{header:1,defval:'',raw:true});
  const header=productionRows.findIndex(row=>productionNorm(row[0])==='№'&&productionNorm(row[1])==='наименование');
  if(header<0)throw Error('Не найдена строка заголовков (№ / Наименование)');
