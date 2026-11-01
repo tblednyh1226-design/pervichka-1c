@@ -51,7 +51,7 @@ const planGuestReadActions=new Set(['device_status','latest','status','iiko_map_
 const planGuestIdempotentActions=new Set(['claim','iiko_map_save','iiko_map_delete']);
 const planGuestInflightReads=new Map();
 const planGuestTimeoutMs={primary:30000,relay:45000,request:45000,download:120000};
-async function planGuestTransport(route,action,extra={},isClaim=false,download=false){
+async function planGuestTransport(route,action,extra={},isClaim=false,download=false,externalSignal=null){
   const {deviceId,token}=planGuestStored();
   if(!isClaim&&(!deviceId||!token))
     throw Error('Сначала подключите MAIN с помощью кода из программы на компьютере');
@@ -61,6 +61,9 @@ async function planGuestTransport(route,action,extra={},isClaim=false,download=f
   const timeoutMs=download?planGuestTimeoutMs.download:
     action==='request'?planGuestTimeoutMs.request:planGuestTimeoutMs[route];
   const controller=new AbortController();
+  const cancel=()=>controller.abort();
+  if(externalSignal?.aborted)cancel();
+  else externalSignal?.addEventListener?.('abort',cancel,{once:true});
   const timer=setTimeout(()=>controller.abort(),timeoutMs);
   try{
     // Keep the timeout active until the ENTIRE response body is read, not
@@ -90,7 +93,10 @@ async function planGuestTransport(route,action,extra={},isClaim=false,download=f
       }
       throw e;
     }
-  }finally{clearTimeout(timer)}
+  }finally{
+    clearTimeout(timer);
+    externalSignal?.removeEventListener?.('abort',cancel);
+  }
 }
 // Race the primary/backup for READS, starting the second shortly after the
 // first. A temporarily slow server no longer forces a 30+45 second serial
@@ -98,10 +104,14 @@ async function planGuestTransport(route,action,extra={},isClaim=false,download=f
 async function planGuestReadRace(action,extra={},download=false){
  const first=planGuestPreferredRoute;
  const second=first==='primary'?'relay':'primary';
+ const controllers={primary:new AbortController(),relay:new AbortController()};
  let winner='';
  const run=async(route)=>{
-   const result=await planGuestTransport(route,action,extra,false,download);
-   if(!winner){winner=route;planGuestPreferredRoute=route}
+   const result=await planGuestTransport(route,action,extra,false,download,controllers[route].signal);
+   if(!winner){
+     winner=route;planGuestPreferredRoute=route;
+     controllers[route==='primary'?'relay':'primary'].abort();
+   }
    return result;
  };
  const a=run(first);
