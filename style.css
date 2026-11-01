@@ -44,3 +44,28 @@ body.guest-mode .context,body.guest-mode .headright{display:none!important}
  .production-tabs{gap:4px;padding:3px}
  .production-tabs .production-tab{flex:1 1 0;min-width:0;font-size:14px;padding:11px 8px}
 }
+
+/* Transfer-specific two-step workflow; does not style cooking acts. */
+#productionPanelTransfers .transfer-actions{display:flex;gap:10px;flex-wrap:wrap;margin:15px 0}
+#productionPanelTransfers .transfer-document{padding:14px 0;border-top:1px solid #e4e7ec}
+#productionPanelTransfers .transfer-summary-row{display:grid;grid-template-columns:1.1fr 1.1fr .62fr .72fr auto;gap:12px;align-items:center}
+#productionPanelTransfers .transfer-summary-row>div{min-width:0}
+#productionPanelTransfers .transfer-label{display:block;font-size:12px;color:#667085;margin-bottom:4px}
+#productionPanelTransfers .transfer-summary-row strong{display:block;font-size:14px;overflow-wrap:anywhere}
+#productionPanelTransfers .transfer-send{white-space:nowrap;padding:11px 13px}
+#productionPanelTransfers .transfer-detail{margin:12px 0 0;padding:10px;border:1px solid #e4e7ec;border-radius:9px;background:#fcfcfd}
+#productionPanelTransfers .transfer-detail summary{cursor:pointer;font-weight:650}
+#productionPanelTransfers .transfer-warehouse{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}
+#productionPanelTransfers .transfer-product-controls{margin:6px 0;min-width:180px}
+#productionPanelTransfers .transfer-product-controls input,#productionPanelTransfers .transfer-product-controls select{width:100%;margin:4px 0}
+#productionPanelTransfers .transfer-map-button{padding:5px 8px;font-size:12px}
+#productionPanelTransfers .transfer-receipt{font-size:13px;font-weight:600}
+#productionPanelTransfers .transfer-warnings{color:#9d4b17;overflow-wrap:anywhere}
+#productionPanelTransfers .numeric{text-align:right;font-variant-numeric:tabular-nums}
+#productionPanelTransfers #transferAlgorithm summary{cursor:pointer;font-weight:650}
+@media(max-width:760px){
+ #productionPanelTransfers .transfer-summary-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
+ #productionPanelTransfers .transfer-summary-row>div:last-child{grid-column:1/-1}
+ #productionPanelTransfers .transfer-send{width:100%}
+ #productionPanelTransfers .transfer-warehouse{grid-template-columns:minmax(0,1fr)}
+}
