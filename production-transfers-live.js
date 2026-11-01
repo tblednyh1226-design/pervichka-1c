@@ -28,41 +28,26 @@ function transferDate(){
  const input=document.getElementById('prodDocDate');
  const value=String(input?.value||'');
  if(!/^\d{4}-\d{2}-\d{2}$/.test(value))throw Error('Выберите дату перемещений');
+ const day=typeof productionSheetISO==='function'?productionSheetISO(productionSheetName,value):'';
+ if(day!==value)throw Error('Дата документа и день Excel должны совпадать. Выберите день заново.');
  return value+'T16:00:00';
 }
 function transferAllItems(doc){
  return (doc?.items||[]).filter(x=>Number(x.quantity)>0);
 }
 function transferFindProduct(item,di,li){
- const key=di+':'+li,explicit=transferLive.mapped.get(key);
- if(explicit)return transferLive.catalogById.get(explicit)||null;
- const norm=transferNorm(transferPrefix(item.name));
- const saved=(typeof iikoDraftState!=='undefined'?iikoDraftState.mappings?.get(norm):null);
- if(saved){
-   const product=transferLive.catalogById.get(saved.target_id);
-   if(product)return product;
- }
- const possibilities=transferLive.catalogByName.get(norm)||[];
- const food=possibilities.filter(p=>!p.type||p.type==='DISH'||p.type==='PREPARED');
- return food.length===1?food[0]:null;
+ if(typeof iikoDraftResolveProduct!=='function')return null;
+ const result=iikoDraftResolveProduct(item);
+ const id=String(result.product?.id||'');
+ return id?transferLive.catalogById.get(id)||null:null;
 }
 function transferMatchCandidates(query){
- const q=transferNorm(query);
- if(!q||!transferLive.catalog.length)return [];
- const results=[];
- for(const p of transferLive.catalog){
-   if(p.type&&p.type!=='DISH'&&p.type!=='PREPARED')continue;
-   const title=transferNorm(p.name),article=transferNorm(p.article);
-   let score=title===q?1000:title.startsWith(q)?850:title.includes(q)?700:
-      article===q?1050:article.includes(q)?500:0;
-   if(!score){
-     const parts=q.split(' ').filter(w=>w.length>=3);
-     const matched=parts.filter(w=>title.includes(w)).length;
-     if(matched)score=Math.round(400*matched/parts.length);
-   }
-   if(score)results.push({p,score});
- }
- return results.sort((a,b)=>b.score-a.score||a.p.name.localeCompare(b.p.name,'ru')).slice(0,20).map(x=>x.p);
+ const source=typeof iikoDraftState!=='undefined'?iikoDraftState.catalogList:[];
+ const score=typeof iikoDraftChoiceScore==='function'?iikoDraftChoiceScore:()=>0;
+ return source.filter(p=>!p.type||['DISH','PREPARED'].includes(String(p.type).toUpperCase()))
+   .map(p=>({p,rank:score(p,query)})).filter(x=>x.rank>0)
+   .sort((a,b)=>b.rank-a.rank||a.p.name.localeCompare(b.p.name,'ru'))
+   .slice(0,30).map(x=>x.p);
 }
 function transferStoreOptions(routeName,selectedId){
  const options=transferLive.stores.map(s=>'<option value="'+transferEscape(s.id)+'"'+
@@ -83,21 +68,9 @@ function transferRememberStore(di,kind,value){
  transferLive.warehouse.set(di+':'+kind,String(value||''));
  transferRefreshSendButtons();
 }
+// Date alignment belongs to productionSelectSheet/productionSelectDate.
 function transferRowDate(){
- const field=document.getElementById('prodDocDate');
- if(!field)return;
- const value=String(typeof productionSheetName!=='undefined'?productionSheetName:'');
- const m=/^(\d{1,2})\.(\d{1,2})/.exec(value);
- if(!m)return;
- const ms=new Date();
- const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',year:'numeric',month:'numeric'})
-   .formatToParts(ms);
- let year=Number(parts.find(x=>x.type==='year').value);
- const month=Number(m[2]),nowMonth=Number(parts.find(x=>x.type==='month').value);
- if(nowMonth===12&&month===1)year++;
- else if(nowMonth===1&&month===12)year--;
- const date=String(year)+'-'+String(month).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
- field.value=date;
+ if(typeof productionSyncTransferDate==='function')productionSyncTransferDate();
 }
 function transferProductControls(di,li,item,selected){
  const options=transferMatchCandidates(transferPrefix(item.name));
@@ -222,41 +195,78 @@ function transferFilterProduct(di,li,text){
  candidates.map(p=>'<option value="'+transferEscape(p.id)+'">'+transferEscape(p.name)+
    (p.article?' · '+transferEscape(p.article):'')+'</option>').join('');
 }
-function transferChooseProduct(di,li,id){
- if(!transferLive.catalogById.has(id))return;
- transferLive.mapped.set(di+':'+li,id);
+async function transferChooseProduct(di,li,id){
  const product=transferLive.catalogById.get(id);
- const label=document.getElementById('transferMatchLabel-'+di+'-'+li);
- if(label)label.textContent=product.name;
- const wrapper=document.getElementById('transferMapBox-'+di+'-'+li);if(wrapper)wrapper.hidden=true;
+ const item=productionDocuments?.[di]?.items?.[li];
+ if(!product||!item||transferLive.busy)return;
+ const pair=typeof planGuestStored==='function'?planGuestStored():null;
+ if(!pair?.deviceId||!pair?.token){
+   transferStatus('Сначала подключите MAIN для общего сохранения соответствия.',true);
+   return;
+ }
+ if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId){
+   transferStatus('Загружаю общий справочник MAIN…');
+   await iikoDraftLoadMappings();
+ }
+ if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId){
+   transferStatus(iikoDraftState.mappingError||'Общий справочник не загрузился.',true);
+   return;
+ }
+ const key=iikoDraftSourceKey(item.name);
+ if(!key||key.length>300){transferStatus('Некорректное название блюда.',true);return}
+ transferLive.busy=true;
  transferRefreshSendButtons();
+ transferStatus('Сохраняю соответствие для актов приготовления и перемещений…');
+ try{
+   await planGuestFetch('iiko_map_save',{
+     source_key:key,target_name:product.name,target_id:product.id||'',
+     target_article:product.article||''
+   });
+   iikoDraftState.mappings.set(key,{source_key:key,target_name:product.name,
+     target_id:product.id||'',target_article:product.article||''});
+   if(typeof iikoDraftRenderSaved==='function')iikoDraftRenderSaved();
+   if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
+   transferStatus('Соответствие «'+item.name+'» → «'+product.name+
+     '» сохранено для обеих вкладок.');
+ }catch(e){
+   transferStatus('Не удалось сохранить соответствие в MAIN: '+String(e.message||e),true);
+ }finally{
+   transferLive.busy=false;
+   transferRender();
+ }
 }
 async function transferConnect(){
  if(transferLive.busy)return;
- transferLive.busy=true;transferStatus('Подключаю справочники номенклатуры и складов iiko…');
- const button=document.getElementById('prodConnectIikoBtn');if(button)button.disabled=true;
+ transferLive.busy=true;
+ const button=document.getElementById('prodConnectIikoBtn');
+ if(button)button.disabled=true;
+ transferStatus('Подключаю единый справочник номенклатуры iiko и соответствия MAIN…');
  try{
-  if(typeof iikoLiveCall!=='function')throw Error('Модуль iiko не загружен');
-  const r=await iikoLiveCall('catalog'); // read-only; does not change cooking documents.
-  if(!r.catalog?.length||!r.stores?.length)throw Error('iiko не вернула склады или блюда');
-  transferLive.catalog=r.catalog.filter(p=>transferUUID.test(String(p.id||''))).map(p=>({
-   id:String(p.id),name:String(p.name),article:String(p.article||''),type:String(p.type||'').toUpperCase()
-  }));
-  transferLive.catalogById=new Map(transferLive.catalog.map(p=>[p.id,p]));
-  transferLive.catalogByName=new Map();
-  for(const p of transferLive.catalog){
-    const key=transferNorm(p.name);
-    if(!transferLive.catalogByName.has(key))transferLive.catalogByName.set(key,[]);
-    transferLive.catalogByName.get(key).push(p);
-  }
-  transferLive.stores=r.stores.filter(p=>transferUUID.test(String(p.id||'')));
-  transferLive.connected=true;
-  transferStatus('iiko подключена. Получено '+transferLive.catalog.length+' позиций и '+
-    transferLive.stores.length+' складов. Проверьте документы ниже.');
-  if(typeof productionDocuments!=='undefined'&&productionDocuments.length)transferRender();
+   if(typeof iikoLiveConnect!=='function'||typeof iikoDraftLoadMappings!=='function')
+     throw Error('Общий модуль сопоставлений не загружен');
+   const pair=typeof planGuestStored==='function'?planGuestStored():null;
+   if(!pair?.deviceId||!pair?.token)throw Error('Сначала подключите MAIN');
+   if(!iikoLiveState.connected||iikoLiveState.mainDevice!==pair.deviceId)
+     await iikoLiveConnect();
+   if(!iikoLiveState.connected||iikoLiveState.mainDevice!==pair.deviceId)
+     throw Error('iiko не подключена. Проверьте соединение на вкладке приготовления');
+   if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId)
+     await iikoDraftLoadMappings();
+   if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId)
+     throw Error(iikoDraftState.mappingError||'Не удалось загрузить общие соответствия');
+   transferLive.catalog=iikoDraftState.catalogList.filter(p=>transferUUID.test(String(p.id||'')));
+   transferLive.catalogById=new Map(transferLive.catalog.map(p=>[p.id,p]));
+   transferLive.stores=iikoLiveState.stores.filter(p=>transferUUID.test(String(p.id||'')));
+   if(!transferLive.catalog.length||!transferLive.stores.length)
+     throw Error('iiko не вернула блюда или склады');
+   transferLive.connected=true;
+   transferStatus('Единый справочник подключён: '+transferLive.catalog.length+
+     ' блюд, '+transferLive.stores.length+' складов, '+
+     iikoDraftState.mappings.size+' подтверждённых соответствий. Одинаково для обеих вкладок.');
+   if(productionDocuments?.length)transferRender();
  }catch(e){
-  transferLive.connected=false;
-  transferStatus('Не удалось получить справочники iiko: '+(e.message||e),true);
+   transferLive.connected=false;
+   transferStatus('Справочник: '+String(e.message||e),true);
  }finally{transferLive.busy=false;if(button)button.disabled=false;transferRefreshSendButtons()}
 }
 async function transferPost(doc){
