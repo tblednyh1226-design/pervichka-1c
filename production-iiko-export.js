@@ -247,7 +247,8 @@ function iikoDraftResolveProduct(item){
   const usable=catalog.filter(isFood);
   const saved=iikoDraftState.mappings.get(key);
   if(saved){
-    const matches=usable.filter(p=>saved.target_id?
+    // A non-food type is permitted only when the user previously confirmed it.
+    const matches=catalog.filter(p=>saved.target_id?
       String(p.id)===String(saved.target_id):
       saved.target_article&&String(p.article)===String(saved.target_article));
     const unique=new Map(matches.map(p=>[String(p.id||p.article),p]));
