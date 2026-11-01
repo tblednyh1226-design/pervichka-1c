@@ -279,7 +279,8 @@ function productionSelectSheet(){
  const pastry=productionFindPastry(productionRows,header+1);
  const pastryColumns=productionPastryColumns(productionRows,pastry.start,header,pastry.end);
  const options=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
-   .filter(x=>x.name&&x.col>=4&&x.point&&x.point!=='Бухара раздача');
+   .filter(x=>x.name&&x.col>=4&&x.point&&
+      x.point!=='Бухара раздача'&&x.point!=='Мед экспресс');
  const unknown=heads.map((v,col)=>({name:String(v??'').trim(),col}))
    .filter(x=>x.name&&x.col>=4&&!productionSkip.test(x.name)&&
       !productionPoint(x.name));
@@ -350,8 +351,8 @@ function productionBuild(){
   });
   // PK→BK must include all pastry minus PR, even if all destination
   // checkboxes are disabled (BR and external customers remain in total).
-  if(columns.some(x=>!x.point||x.point==='Бухара раздача'))
-   throw Error('БР не участвует в перемещениях; проверьте выбранные колонки');
+  if(columns.some(x=>!x.point||x.point==='Бухара раздача'||x.point==='Мед экспресс'))
+   throw Error('БР и Мед экспресс не выбираются как обычные получатели перемещений');
   const warnings=[],missingCodes=[],invalidValues=[];
   if(context.unknown.length)
    warnings.push('Неизвестные колонки не обрабатываются: '+
@@ -429,7 +430,8 @@ function productionBuild(){
      missingCodes.push('Строка '+entry.sourceRow+': «'+entry.name+
        '» — нет числового кода (оставлено в черновике для сопоставления)');
    for(const [point,count] of quantities){
-     if(point==='Бухара раздача'||(isPastry&&point==='Правда раздача'))
+     if(point==='Бухара раздача'||point==='Мед экспресс'||
+       (isPastry&&point==='Правда раздача'))
        continue; // PR pastry stays outside ALL transfer documents.
      add('Бухара кухня',point,entry,count);
      inputLines++;
