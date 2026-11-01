@@ -20,9 +20,29 @@ function transferSignature(){
  for(let i=0;i<text.length;i++){hash^=text.charCodeAt(i);hash=Math.imul(hash,16777619)}
  return (hash>>>0).toString(16);
 }
+function transferHash(text){
+ let h=2166136261;
+ for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619)}
+ return (h>>>0).toString(16).padStart(8,'0');
+}
 function transferLockKey(doc,i){
  const device=typeof planGuestStored==='function'?planGuestStored().deviceId:'';
- return 'pomogator-transfer-once:'+device+':'+transferLive.sig+':'+i+':'+doc.source+':'+doc.target;
+ // Stable per-document identity: opening the SAME Excel by another button
+ // or filename must never reactivate an already confirmed transfer.
+ const ref=document.getElementById('prodDocDate')?.value||'';
+ const date=typeof productionSheetISO==='function'?
+   productionSheetISO(doc.date,ref)||String(doc.date||''):String(doc.date||'');
+ const items=transferAllItems(doc).map(x=>({
+   name:transferNorm(x.name),weight:transferNorm(x.weight),
+   quantity:Number(x.quantity)
+ })).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+ const identity=transferHash(JSON.stringify({date,from:doc.source,to:doc.target,items}));
+ const key='pomogator-transfer-once:v2:'+device+':'+identity;
+ // Preserve earlier sent/uncertain results from the old filename-based keys.
+ const legacy='pomogator-transfer-once:'+device+':'+transferLive.sig+':'+i+':'+doc.source+':'+doc.target;
+ const old=localStorage.getItem(legacy);
+ if(old&&!localStorage.getItem(key))localStorage.setItem(key,old);
+ return key;
 }
 function transferDate(){
  const input=document.getElementById('prodDocDate');
@@ -268,7 +288,11 @@ function transferDetailItems(doc,di){
        iikoDraftResolveProduct(item):{error:'Справочник недоступен'};
      const product=result.product||null;
      return '<tr><td>'+transferEscape(item.name)+'</td><td class="numeric">'+
-       transferEscape(item.quantity)+'</td><td>'+
+       transferEscape(item.quantity)+
+       (item.conversionFactor===8?'<small class="muted"> ('+
+         transferEscape(item.sourceQuantity)+' пирог × 8 = '+
+         transferEscape(item.quantity)+' кус.)</small>':'')+
+       '</td><td>'+
        (product?'<b>'+transferEscape(product.name)+'</b>'+
          (result.source==='saved'?' · Запомнено':''):
          '<strong>Не сопоставлено</strong> · '+transferEscape(result.error||''))+
@@ -322,18 +346,13 @@ function transferRender(){
  }).join('');
  area.hidden=false;
  area.innerHTML=transferRenderMappingPanel()+'<h3>Документы перемещений — '+transferEscape(productionSheetName)+'</h3>'+
- '<p class="muted">Непроведённые документы NEW. Сумма пока не рассчитана: данных о себестоимости нет. '+
- 'Перед отправкой откройте документ и проверьте склад и номенклатуру.</p>'+
+ '<p class="muted">Перемещения отправляются в iiko в любом порядке, независимо друг от друга. '+
+ 'После подтверждённой отправки кнопка «Отправлено» становится неактивной. '+
+ 'Большие пироги пересчитаны в куски ×8. Документы NEW, без проведения. '+
+ 'Перед отправкой проверьте склад, блюда и количество.</p>'+
  '<p class="muted">Если название склада iiko отличается от названия в плане, выберите его внутри документа.</p>'+
  items;
  transferRefreshSendButtons();
-}
-function transferUpstreamReady(index){
- if(index===0)return true;
- const first=productionDocuments?.[0];
- if(!first||first.source!=='Правда кухня'||first.target!=='Бухара кухня')return true;
- const key=transferLockKey(first,0);
- return String(localStorage.getItem(key)||'').startsWith('confirmed:');
 }
 function transferUnlock(index){
  const doc=productionDocuments?.[index];if(!doc)return;
@@ -354,12 +373,12 @@ function transferRefreshSendButtons(){
   const key=transferLockKey(doc,i);
   const ready=transferLive.connected&&transferStore(i,'from')&&transferStore(i,'to')&&
    transferStore(i,'from')!==transferStore(i,'to')&&
-   transferAllItems(doc).every((x,j)=>transferFindProduct(x,i,j))&&transferUpstreamReady(i);
+   transferAllItems(doc).every((x,j)=>transferFindProduct(x,i,j));
   const locked=transferLive.locks.has(key)||Boolean(localStorage.getItem(key));
   btn.disabled=transferLive.busy||!ready||locked;
   btn.textContent=transferLive.receipts.get(key)?.ok||
     String(localStorage.getItem(key)||'').startsWith('confirmed:')?'Отправлено':
-    locked?'Проверьте в iiko':!transferUpstreamReady(i)?'Сначала ПК → БК':'Отправить в iiko';
+    locked?'Проверьте в iiko':'Отправить в iiko';
  }
 }
 async function transferConnect(){
@@ -421,9 +440,6 @@ async function transferSend(index){
  const doc=productionDocuments[index];
  if(!doc||!doc.items?.length)return;
  const key=transferLockKey(doc,index);
- if(!transferUpstreamReady(index)){
-   transferStatus('Сначала отправьте и подтвердите перемещение ПК → БК.',true);return;
- }
  if(transferLive.locks.has(key)||localStorage.getItem(key)){
    transferStatus('Этот документ уже отправлялся. Перед повтором обязательно проверьте iiko.',true);return;
  }
