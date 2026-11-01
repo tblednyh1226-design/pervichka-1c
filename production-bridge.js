@@ -315,6 +315,9 @@ async function planBridgePair(){
     planBridgeRefreshSavedCode();
     planBridgeStatus('MAIN подключён. Код сохранён на этом устройстве и восстановится при следующем открытии Помогатора.');
     if(previousDevice!==r.device_id){
+      // Avoid retaining private XLSX data after switching to another MAIN.
+      planGuestExcelCache.clear();
+      planGuestExcelInflight.clear();
       // Do not reuse the previous MAIN's iiko catalogue or paired lookups.
       if(typeof iikoLiveState!=='undefined'){
         iikoLiveState.connected=false;iikoLiveState.mainDevice='';
@@ -339,6 +342,8 @@ function planBridgeDisconnect(){
   if(!window.confirm('Забыть сохранённый 32-символьный код MAIN на этом устройстве и отключить доступ к файлу?'))return;
   localStorage.removeItem('pomogator_guest_device_id');
   localStorage.removeItem('pomogator_guest_browser_token');
+  planGuestExcelCache.clear();
+  planGuestExcelInflight.clear();
   if(typeof iikoLiveState!=='undefined'){iikoLiveState.connected=false;iikoLiveState.mainDevice=''}
   if(typeof transferLive!=='undefined'){
     transferLive.connected=false;transferLive.catalog=[];transferLive.catalogById.clear();transferLive.stores=[];
