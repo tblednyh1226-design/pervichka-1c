@@ -1,7 +1,7 @@
 /* Production draft upload to the existing, privately configured iikoServer.
    Each click sends ONE NEW unposted act. No automatic retries or document-number lookups. */
 const IIKO_LIVE_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-drafts';
-const iikoLiveState={busy:false,stores:[],connected:false,mainDevice:'',receipts:[],submitted:new Set()};
+const iikoLiveState={busy:false,pendingConnect:null,resolveConnect:null,stores:[],connected:false,mainDevice:'',receipts:[],submitted:new Set()};
 function iikoLiveStatus(text,isError=false){
   const el=document.getElementById('iikoLiveStatus');
   if(el){el.textContent=text;el.style.color=isError?'#b42318':''}
@@ -65,8 +65,9 @@ function iikoLiveSetCatalog(catalog){
   iikoDraftState.catalogCount=values.length;
 }
 async function iikoLiveConnect(){
-  if(iikoLiveState.busy)return;
+  if(iikoLiveState.busy)return await iikoLiveState.pendingConnect;
   iikoLiveState.busy=true;
+  iikoLiveState.pendingConnect=new Promise(resolve=>{iikoLiveState.resolveConnect=resolve});
   const btn=document.getElementById('iikoLiveConnectBtn');
   if(btn)btn.disabled=true;
   iikoLiveStatus('Подключаюсь к iikoServer, загружаю номенклатуру и склады…');
@@ -101,13 +102,17 @@ async function iikoLiveConnect(){
     iikoLiveState.busy=false;
     if(btn)btn.disabled=false;
     iikoLiveRefreshButtons();
+    iikoLiveState.resolveConnect?.();
+    iikoLiveState.resolveConnect=null;
+    iikoLiveState.pendingConnect=null;
   }
 }
 // A cooking-act preview can request the live catalogue automatically (READ ONLY).
 // No act is ever sent or posted without the administrator's separate action.
 async function iikoLiveEnsureCatalog(){
  const pair=typeof planGuestStored==='function'?planGuestStored():null;
- if(!pair?.deviceId||!pair?.token||iikoLiveState.busy)return;
+ if(!pair?.deviceId||!pair?.token)return;
+ if(iikoLiveState.busy){await iikoLiveState.pendingConnect;return}
  if(iikoLiveState.connected&&iikoLiveState.mainDevice===pair.deviceId&&iikoDraftState.catalogCount){
    if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId)
      await iikoDraftLoadMappings();
