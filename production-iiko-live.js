@@ -1,7 +1,7 @@
 /* Production draft upload to the existing, privately configured iikoServer.
    Each click sends ONE NEW unposted act. No automatic retries or document-number lookups. */
 const IIKO_LIVE_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-drafts';
-const iikoLiveState={busy:false,stores:[],connected:false,receipts:[],submitted:new Set()};
+const iikoLiveState={busy:false,stores:[],connected:false,mainDevice:'',receipts:[],submitted:new Set()};
 function iikoLiveStatus(text,isError=false){
   const el=document.getElementById('iikoLiveStatus');
   if(el){el.textContent=text;el.style.color=isError?'#b42318':''}
@@ -75,19 +75,46 @@ async function iikoLiveConnect(){
     if(!result.catalog?.length||!result.stores?.length)throw Error('iiko не вернула номенклатуру или список складов');
     iikoLiveSetCatalog(result.catalog);
     iikoLiveState.stores=result.stores;
+    iikoLiveState.mainDevice=planGuestStored().deviceId;
     iikoLiveState.connected=true;
     iikoLiveRenderStores();
+    if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==iikoLiveState.mainDevice)
+      await iikoDraftLoadMappings();
+    if(!iikoDraftState.mappingLoaded)
+      throw Error(iikoDraftState.mappingError||'Не удалось получить общие соответствия MAIN');
     iikoDraftAutoCheck();
+    if(typeof transferLive!=='undefined'){
+      transferLive.catalog=iikoDraftState.catalogList.filter(p=>transferUUID.test(String(p.id||'')));
+      transferLive.catalogById=new Map(transferLive.catalog.map(p=>[p.id,p]));
+      transferLive.stores=iikoLiveState.stores.filter(p=>transferUUID.test(String(p.id||'')));
+      transferLive.connected=true;
+      if(typeof productionDocuments!=='undefined'&&productionDocuments.length)transferRender();
+    }
     iikoLiveStatus('Подключение установлено. Получено '+iikoDraftState.catalogCount+
       ' позиций iiko и '+result.stores.length+' складов. Выберите склады БК и ПК. При несовпадениях подтвердите номенклатуру.');
   }catch(e){
     iikoLiveState.connected=false;
+    iikoLiveState.mainDevice='';
+    if(typeof transferLive!=='undefined')transferLive.connected=false;
     iikoLiveStatus('Не удалось подключить iiko: '+(e.message||e),true);
   }finally{
     iikoLiveState.busy=false;
     if(btn)btn.disabled=false;
     iikoLiveRefreshButtons();
   }
+}
+// A cooking-act preview can request the live catalogue automatically (READ ONLY).
+// No act is ever sent or posted without the administrator's separate action.
+async function iikoLiveEnsureCatalog(){
+ const pair=typeof planGuestStored==='function'?planGuestStored():null;
+ if(!pair?.deviceId||!pair?.token||iikoLiveState.busy)return;
+ if(iikoLiveState.connected&&iikoLiveState.mainDevice===pair.deviceId&&iikoDraftState.catalogCount){
+   if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId)
+     await iikoDraftLoadMappings();
+   iikoDraftAutoCheck();
+   return;
+ }
+ await iikoLiveConnect();
 }
 function iikoLiveReceiptKey(doc,signature){
   return [doc.warehouseCode,doc.dateIncoming,signature].join('|');
