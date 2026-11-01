@@ -100,12 +100,13 @@ async function iikoDraftLoadMappings(){
     iikoDraftState.mappingLoading=false;
     iikoDraftRenderSaved();
     iikoDraftAutoCheck();
+    if(typeof transferRender==='function'&&typeof productionDocuments!=='undefined'&&productionDocuments.length)transferRender();
   }
 }
 function iikoDraftRenderSaved(){
   const el=document.getElementById('iikoDraftSavedMappings');
   if(!el)return;
-  iikoDraftState.mappingRows=[...iikoDraftState.mappings.entries()];
+  iikoDraftState.mappingRows=[...iikoDraftState.mappings.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ru'));
   const rows=iikoDraftState.mappingRows.map(([key,p],i)=>
     '<tr><td>'+iikoDraftHtml(key)+'</td><td>'+iikoDraftHtml(p.target_name)+
     '</td><td>'+iikoDraftHtml(p.target_article||p.target_id||'')+
@@ -207,6 +208,7 @@ async function iikoDraftSaveChoice(index){
       target_id:product.id||'',target_article:product.article||''});
     iikoDraftRenderSaved();
     iikoDraftCheck();
+    if(typeof transferRender==='function'&&typeof productionDocuments!=='undefined'&&productionDocuments.length)transferRender();
   }catch(e){
     if(status)status.textContent='Не удалось сохранить соответствие: '+String(e.message||e);
   }
@@ -221,6 +223,7 @@ async function iikoDraftDeleteMapping(index){
     iikoDraftState.mappings.delete(key);
     iikoDraftRenderSaved();
     iikoDraftAutoCheck();
+    if(typeof transferRender==='function'&&typeof productionDocuments!=='undefined'&&productionDocuments.length)transferRender();
   }catch(e){
     const status=document.getElementById('iikoDraftStatus');
     if(status)status.textContent='Не удалось удалить соответствие: '+String(e.message||e);
@@ -233,25 +236,38 @@ function iikoDraftStore(which,end){
   const id='iikoDraft'+which+(end==='from'?'From':'To');
   return String(document.getElementById(id)?.value||'').trim();
 }
-function iikoDraftItem(item){
-  const prefix=iikoDraftPrefix(item.name),key=iikoDraftSourceKey(item.name);
-  // First try the exact name before the parenthetical composition.
-  const exact=iikoDraftState.catalog.get(iikoDraftExact(prefix))||[];
-  const dishes=exact.filter(p=>!p.type||['DISH','PREPARED'].includes(p.type));
-  if(dishes.length===1)return iikoDraftMatchedItem(item,dishes[0]);
-  // Previously approved mapping is used only after validating the actual iiko ID/article
-  // against the currently loaded catalogue. A renamed/removed product must be reapproved.
+// The single resolver used by cooking acts and all transfer documents.
+// Only currently present, unambiguous iiko product IDs may be used.
+function iikoDraftResolveProduct(item){
+  const key=iikoDraftSourceKey(item?.name);
+  if(!key)return {error:'Пустое название блюда в плане'};
+  if(!iikoDraftState.mappingLoaded)return {error:'Общий справочник соответствий ещё загружается'};
+  const catalog=iikoDraftState.catalogList||[];
+  const isFood=p=>!p.type||['DISH','PREPARED'].includes(String(p.type).toUpperCase());
+  const usable=catalog.filter(isFood);
   const saved=iikoDraftState.mappings.get(key);
   if(saved){
-    const options=iikoDraftState.catalogList.filter(p=>
-      saved.target_id?p.id===saved.target_id:p.article===saved.target_article);
-    const unique=new Map(options.map(p=>[(p.id||'article:'+p.article),p]));
-    if(unique.size===1)return iikoDraftMatchedItem(item,[...unique.values()][0]);
+    const matches=usable.filter(p=>saved.target_id?
+      String(p.id)===String(saved.target_id):
+      saved.target_article&&String(p.article)===String(saved.target_article));
+    const unique=new Map(matches.map(p=>[String(p.id||p.article),p]));
+    if(unique.size===1)return {product:[...unique.values()][0],source:'saved'};
     return {error:'Сохранённое соответствие отсутствует или неоднозначно в текущем справочнике iiko'};
   }
-  return {error:dishes.length>1?'В справочнике iiko несколько блюд с таким названием':
-    exact.length?'Название найдено, но тип номенклатуры не является блюдом/заготовкой — требуется подтверждение':
-    'Не найдено название до скобок в справочнике iiko'};
+  // Prefer one exact normalized name. A matching title with composition in
+  // parentheses is a fallback only when it identifies a single product.
+  const exact=usable.filter(p=>iikoDraftNorm(p.name)===key);
+  const matches=exact.length?exact:usable.filter(p=>iikoDraftSourceKey(p.name)===key);
+  const unique=new Map(matches.map(p=>[String(p.id||p.article),p]));
+  if(unique.size===1)return {product:[...unique.values()][0],source:'exact'};
+  if(unique.size>1)return {error:'В iiko несколько подходящих блюд — выберите нужное вручную'};
+  const any=catalog.some(p=>iikoDraftNorm(p.name)===key||iikoDraftSourceKey(p.name)===key);
+  return {error:any?'Название найдено, но тип позиции требует ручного подтверждения':
+    'Название блюда не найдено в iiko'};
+}
+function iikoDraftItem(item){
+ const match=iikoDraftResolveProduct(item);
+ return match.product?iikoDraftMatchedItem(item,match.product):{error:match.error};
 }
 function iikoDraftMatchedItem(item,product){
   return {name:item.name,iikoName:product.name,product:product.id||'',productArticle:product.article||'',
