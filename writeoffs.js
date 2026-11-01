@@ -149,7 +149,7 @@ async function submit(){
  });
 }
 function fillDocument(doc,copy=false){
- loading=true;
+ clearLocal();loading=true;
  currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;currentStatus=copy?'draft':doc.status;viewOnly=!copy&&doc.status==='draft'&&doc.created_by!==userId;dirty=false;
  $('docDate').value=doc.doc_date||today();$('shift').value=doc.shift||'';$('warehouse').value=doc.warehouse||'';
  entries={raw:[],semi:[],dish:[]};
