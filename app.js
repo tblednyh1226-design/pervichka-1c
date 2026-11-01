@@ -18,6 +18,35 @@ function renderOrgs(){org.innerHTML='';if(!orgs.length)org.innerHTML='<option va
 function openOrgForm(){orgmodal.hidden=false;orgname.value='';orginn.value='';orgerror.textContent='';setTimeout(()=>orgname.focus(),50)}function closeOrgForm(){orgmodal.hidden=true}
 let orgSaving=false;async function saveOrgForm(){if(orgSaving)return;const name=orgname.value.trim(),inn=orginn.value.trim();if(!name){orgerror.textContent='Введите название организации.';return}orgSaving=true;const btn=document.querySelector('#orgmodal .primary');btn.disabled=true;btn.textContent='Сохраняю…';orgerror.textContent='';try{if(!baseRow?.id){const br=await sb.from('one_c_bases').select('id,workspace_id,name').eq('workspace_id',workspace.id).order('created_at').limit(1).maybeSingle();if(br.error)throw br.error;baseRow=br.data}if(!baseRow?.id)throw new Error('Не найден технический профиль рабочего пространства');const r=await sb.from('organizations').insert({workspace_id:workspace.id,base_id:baseRow.id,name,inn:inn||null}).select().single();if(r.error){if(r.error.code==='23505'){await loadOrgs();const existing=orgs.find(x=>x.name.trim().toLowerCase()===name.toLowerCase()&&(x.inn||'')===(inn||''));if(existing){activeOrgId=existing.id;localStorage.setItem('pervichka_active_org_v2',activeOrgId);closeOrgForm();renderOrgs();return}}throw r.error}activeOrgId=r.data.id;localStorage.setItem('pervichka_active_org_v2',activeOrgId);closeOrgForm();await loadOrgs();await renderDirs()}catch(e){console.error(e);orgerror.textContent='Не удалось сохранить: '+(e.message||e)}finally{orgSaving=false;btn.disabled=false;btn.textContent='Сохранить'}}
 async function deleteOrg(id){const x=orgs.find(o=>o.id===id);if(!x||!confirm('Удалить организацию «'+x.name+'» и связанные с ней данные?'))return;const r=await sb.from('organizations').delete().eq('id',id);if(r.error){alert(r.error.message);return}if(activeOrgId===id)activeOrgId=null;await loadOrgs();await renderDirs()}
+const HOME_TABS={novikova:['homeTabNovikova','homePanelNovikova'],kolhoz:['homeTabKolhoz','homePanelKolhoz'],other:['homeTabOther','homePanelOther']};
+function switchHomeTab(tab,remember=true){
+  const selected=Object.prototype.hasOwnProperty.call(HOME_TABS,tab)?tab:'novikova';
+  for(const [name,[buttonId,panelId]] of Object.entries(HOME_TABS)){
+    const button=document.getElementById(buttonId),panel=document.getElementById(panelId);
+    if(!button||!panel)continue;
+    const active=name===selected;
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-selected',String(active));
+    button.tabIndex=active?0:-1;
+    panel.hidden=!active;
+  }
+  if(remember){try{localStorage.setItem('pervichka_home_tab_v1',selected)}catch(_){}}
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  let saved='novikova';
+  try{saved=localStorage.getItem('pervichka_home_tab_v1')||'novikova'}catch(_){}
+  switchHomeTab(saved,false);
+  const tabs=document.querySelector('.home-tabs');
+  if(tabs)tabs.addEventListener('keydown',(event)=>{
+    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    const names=Object.keys(HOME_TABS),current=names.findIndex(n=>document.getElementById(HOME_TABS[n][0])===document.activeElement);
+    if(current<0)return;
+    event.preventDefault();
+    const next=event.key==='Home'?0:event.key==='End'?names.length-1:(current+(event.key==='ArrowRight'?1:-1)+names.length)%names.length;
+    switchHomeTab(names[next]);
+    document.getElementById(HOME_TABS[names[next]][0])?.focus();
+  });
+});
 function show(id){document.querySelectorAll('main>section').forEach(x=>x.hidden=true);document.getElementById(id).hidden=false;scrollTo(0,0);if(id==='journal')renderJournal().catch(console.error);if(id==='dirs'){activeOrgId=org.value||activeOrgId;if(activeOrgId)localStorage.setItem('pervichka_active_org_v2',activeOrgId);dirstored.innerHTML='<p class="muted">Загружаю номенклатуру…</p>';renderDirs().catch(e=>{console.error(e);dirstored.innerHTML='<p class="muted">Ошибка загрузки справочника: '+esc(e.message||e)+'</p>'})}}
 document.getElementById('doc').addEventListener('change',e=>{const fs=[...e.target.files];docname.textContent=fs.length?(fs.length===1?'Выбран: '+fs[0].name:'Выбрано документов: '+fs.length+' — '+fs.map(f=>f.name).join(', ')):'Файлы ещё не выбраны'});
 async function uploadDocuments(){activeOrgId=org.value||activeOrgId;const files=[...doc.files];if(!activeOrgId){docstatus.textContent='Сначала выберите организацию.';return}if(!files.length){docstatus.textContent='Выберите фото или PDF накладной.';return}const btn=document.getElementById('docuploadbtn');btn.disabled=true;const rows=files.map(f=>({f,state:'Ожидает загрузки'}));const paint=()=>docstatus.innerHTML=rows.map(x=>'<div class="uploadrow"><b>'+esc(x.f.name)+'</b><span>'+esc(x.state)+'</span></div>').join('');paint();try{const {data:{session}}=await sb.auth.getSession();if(!session)throw new Error('Сессия истекла. Войдите снова.');for(const x of rows){x.state='Подготавливаю загрузку…';paint();const pr=await fetch(SUPABASE_URL+'/functions/v1/prepare-document-upload',{method:'POST',headers:{Authorization:'Bearer '+session.access_token,apikey:SUPABASE_KEY,'Content-Type':'application/json'},body:JSON.stringify({organization_id:activeOrgId,filename:x.f.name})});const p=await pr.json();if(!pr.ok||!p.ok)throw new Error(p.error||'Не удалось подготовить загрузку');x.state='Загружается…';paint();const up=await sb.storage.from('document-files').uploadToSignedUrl(p.path,p.token,x.f,{contentType:x.f.type||'application/octet-stream'});if(up.error)throw new Error(up.error.message);x.state='Файл загружен';paint();const ins=await sb.from('documents').insert({workspace_id:p.workspace_id,organization_id:activeOrgId,doc_type:'purchase_invoice',status:'Требует проверки',source_file_name:x.f.name,storage_path:p.path,recognition_status:'queued',diagnostic_message:'Файл сохранён. Ожидает распознавания.',created_by:session.user.id}).select('id').single();if(ins.error)throw new Error(ins.error.message);x.state='✓ Загружен · ожидает распознавания';paint()}recognition.hidden=false;rlines.innerHTML='<tr><td colspan="6" class="muted">Файлы загружены. Здесь появятся распознанные строки накладной.</td></tr>';await renderJournal()}catch(e){console.error(e);const x=rows.find(r=>!r.state.startsWith('✓'));if(x)x.state='Ошибка: '+(e.message||e);paint()}finally{btn.disabled=false}}
