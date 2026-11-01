@@ -537,8 +537,11 @@ function productionBuild(){
      const relevant=[...columns.map(t=>productionPastryReceiverColumn(t,context)),
        cols.totalCol,cols.prCol,cols.brCol];
      const hasPositive=[...new Set(relevant)].some(c=>productionQuantity(row[c])>0);
+     const invalidReceiverValue=[...new Set(relevant)]
+       .filter(c=>c!==cols.totalCol)
+       .some(c=>productionQuantity(row[c])===null&&!productionBlankQuantity(row[c]));
      const rawTotal=row[cols.totalCol];
-     if(!hasPositive&&productionQuantity(rawTotal)===null){
+     if(!hasPositive&&!invalidReceiverValue&&productionQuantity(rawTotal)===null){
        emptyPastrySkipped++;
        if(!productionBlankQuantity(rawTotal))
          warnings.push('Строка '+(i+1)+' «'+name+
