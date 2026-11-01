@@ -165,15 +165,17 @@ function productionPastryColumns(rows,pastryStart,mainHeader,pastryEnd){
    const row=rows[i]||[],roles={total:[],pr:[],br:[]};
    row.forEach((value,col)=>{const role=productionPastryRole(value);if(role)roles[role].push(col)});
    const count=roles.total.length+roles.pr.length+roles.br.length;
-   if(count<2)continue;
-   if(!productionNorm(row[1]).includes('наименован')&&productionNorm(row[0])!=='№'&&count<3)continue;
+   const looksLikeHeader=productionNorm(row[1]).includes('наименован')||
+     productionNorm(row[0])==='№';
+   if(!looksLikeHeader&&count<3)continue;
    candidates.push({row:i,roles,complete:roles.total.length===1&&roles.pr.length===1&&roles.br.length===1});
  }
  const compare=(a,b)=>Math.abs(a.row-pastryStart)-Math.abs(b.row-pastryStart);
- const match=candidates.filter(x=>x.complete).sort(compare)[0];
- if(match)return {totalCol:match.roles.total[0],prCol:match.roles.pr[0],
-   brCol:match.roles.br[0],headerRow:match.row,needsReview:false};
+ // A nearby incomplete pastry heading must NOT be silently overridden by
+ // a complete but distant main-menu heading: columns may have moved.
  const nearest=candidates.sort(compare)[0];
+ if(nearest?.complete)return {totalCol:nearest.roles.total[0],prCol:nearest.roles.pr[0],
+   brCol:nearest.roles.br[0],headerRow:nearest.row,needsReview:false};
  return {totalCol:nearest?.roles.total.length===1?nearest.roles.total[0]:null,
    prCol:nearest?.roles.pr.length===1?nearest.roles.pr[0]:null,
    brCol:nearest?.roles.br.length===1?nearest.roles.br[0]:null,
