@@ -227,7 +227,8 @@ function productionBuild(){
     const name=String(context.heads[col]??'').trim();
     return {col,name,point:productionPoint(name)};
   });
-  if(!columns.length)throw Error('Выберите хотя бы одну колонку точки');
+  // PK→BK must include all pastry minus PR, even if all destination
+  // checkboxes are disabled (BR and external customers remain in total).
   if(columns.some(x=>!x.point||x.point==='Бухара раздача'))
    throw Error('БР не участвует в перемещениях; проверьте выбранные колонки');
   const warnings=[],missingCodes=[],invalidValues=[];
