@@ -2,7 +2,7 @@
    Cooking acts, their data and their API remain untouched. */
 const TRANSFER_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-transfers';
 const transferLive={connected:false,busy:false,stores:[],catalog:[],catalogById:new Map(),catalogByName:new Map(),
- mapped:new Map(),warehouse:new Map(),sending:new Set(),locks:new Set(),receipts:new Map(),sig:'',mappingEntries:[],editKeys:new Set(),mappingQueries:new Map(),savedRows:[]};
+ mapped:new Map(),warehouse:new Map(),sending:new Set(),locks:new Set(),receipts:new Map(),sig:'',mappingEntries:[],editKeys:new Set(),mappingQueries:new Map(),savedRows:[],checking:false};
 const transferEscape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const transferNorm=v=>String(v??'').toLowerCase().replace(/ё/g,'е').replace(/\s+/g,' ').trim();
 const transferPrefix=v=>String(v??'').split(/[（(]/,1)[0].trim();
@@ -326,7 +326,8 @@ function transferRender(){
     '<div><span class="transfer-label">Количество</span><strong>'+totalQty(doc).toLocaleString('ru-RU')+'</strong></div>'+
     '<div><span class="transfer-label">Сумма, ₽</span><strong title="Себестоимость пока не загружена">—</strong></div>'+
     '<div><button type="button" class="primary transfer-send" id="transferSend-'+i+'"'+(disabled?' disabled':'')+
-      ' onclick="transferSend('+i+')">'+(sending?'Отправляю…':res?.ok||persisted.startsWith('confirmed:')?'Отправлено':isLocked?'Проверьте в iiko':'Отправить в iiko')+'</button></div>'+
+      ' onclick="transferSend('+i+')">'+(sending?'Отправляю…':res?.ok||persisted.startsWith('confirmed:')?'Отправлено':
+   res&&!res.ok?'Ошибка отправки — проверьте iiko':isLocked?'Проверьте в iiko':'Отправить в iiko')+'</button></div>'+
    '</div>'+
    '<details class="transfer-detail" id="transferDetail-'+i+'"><summary>Проверить блюда и количество ('+
      doc.items.length+' поз.)</summary>'+
@@ -340,13 +341,16 @@ function transferRender(){
       '<p class="muted">Сумма появится после подключения достоверной себестоимости. Ноль не подставляется.</p>'+
    '</details>'+
    (res?'<p class="transfer-receipt">'+(res.ok?'iiko приняла документ NEW'+(res.number?', № '+transferEscape(res.number):''):
-     'Результат неизвестен — проверьте документ в iiko перед повтором')+'</p>':'')+
+     'Ошибка или неопределённый результат: '+transferEscape(res.error||'')+
+     '. Проверьте документ в iiko перед повтором.')+'</p>':'')+
    (persisted==='pending'&&!sending?'<button type="button" class="transfer-map-button" onclick="transferUnlock('+i+')">'+
       'Я проверила в iiko: документа нет — разрешить повтор</button>':'')+
   '</article>';
  }).join('');
  area.hidden=false;
  area.innerHTML=transferRenderMappingPanel()+'<h3>Документы перемещений — '+transferEscape(productionSheetName)+'</h3>'+
+ '<p><button type="button" id="transferReconcileBtn"'+(transferLive.checking?' disabled':'')+
+ ' onclick="transferReconcile()">Проверить статусы перемещений в iiko</button></p>'+
  '<p class="muted">Перемещения отправляются в iiko в любом порядке, независимо друг от друга. '+
  'После подтверждённой отправки кнопка «Отправлено» становится неактивной. '+
  'Большие пироги пересчитаны в куски ×8. Документы NEW, без проведения. '+
@@ -354,6 +358,61 @@ function transferRender(){
  '<p class="muted">Если название склада iiko отличается от названия в плане, выберите его внутри документа.</p>'+
  items;
  transferRefreshSendButtons();
+}
+// Read-only iiko reconciliation; requires exact item quantities, stores and date.
+async function transferReconcile(){
+ if(!transferLive.connected||transferLive.checking||transferLive.busy||
+    typeof productionDocuments==='undefined'||!productionDocuments.length)return;
+ let date;try{date=transferDate()}catch(e){transferStatus(String(e.message||e),true);return}
+ const candidates=[];
+ for(let i=0;i<productionDocuments.length;i++){
+   const doc=productionDocuments[i],from=transferStore(i,'from'),to=transferStore(i,'to');
+   const items=transferAllItems(doc).map((item,j)=>{
+      const p=transferFindProduct(item,i,j);
+      return p?{productId:p.id,amount:Number(item.quantity)}:null;
+   });
+   if(!from||!to||from===to||!items.length||items.some(x=>!x))continue;
+   candidates.push({index:i,key:transferLockKey(doc,i),document:{
+      type:'transfer',status:'NEW',dateIncoming:date,
+      storeFromId:from,storeToId:to,items
+   }});
+ }
+ if(!candidates.length)return;
+ transferLive.checking=true;
+ const button=document.getElementById('transferReconcileBtn');
+ if(button)button.disabled=true;
+ transferStatus('Сверяю существующие перемещения с журналом iiko — ничего не отправляю…');
+ try{
+   const pair=typeof planGuestStored==='function'?planGuestStored():null;
+   if(!pair?.deviceId||!pair?.token)throw Error('MAIN не подключён');
+   const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),60000);
+   let result;
+   try{
+     const response=await fetch(TRANSFER_ENDPOINT,{method:'POST',cache:'no-store',
+      headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,
+       'x-browser-token':pair.token},
+      body:JSON.stringify({action:'inspect_transfers',documents:candidates.map(x=>x.document)}),
+      signal:ac.signal});
+     result=await response.json().catch(()=>({ok:false,error:'iiko вернула непонятный ответ'}));
+     if(!response.ok||!result.ok)throw Error(result.error||'Не удалось прочитать журнал iiko');
+   }finally{clearTimeout(timer)}
+   let confirmed=0,uncertain=0;
+   for(const item of result.matches||[]){
+     const entry=candidates[item.index];
+     if(!entry)continue;
+     if(item.matched&&transferUUID.test(String(item.id||''))){
+       localStorage.setItem(entry.key,'confirmed:'+item.id);
+       transferLive.locks.add(entry.key);
+       transferLive.receipts.set(entry.key,{ok:true,id:item.id,number:item.number||''});
+       confirmed++;
+     }else if(item.ambiguous)uncertain++;
+   }
+   transferStatus('Проверка iiko: подтверждено '+confirmed+
+     ' перемещений, неоднозначных '+uncertain+'. Новые документы не создавались.');
+ }catch(e){
+   transferStatus('Проверка iiko не удалась: '+String(e.message||e)+
+     '. Повторная отправка не разрешена.',true);
+ }finally{transferLive.checking=false;transferRender()}
 }
 function transferUnlock(index){
  const doc=productionDocuments?.[index];if(!doc)return;
@@ -379,9 +438,10 @@ function transferRefreshSendButtons(){
   const sending=transferLive.sending.has(key);
   btn.disabled=transferLive.busy||!ready||locked||sending;
   if(sending){btn.textContent='Отправляю…';continue}
-  btn.textContent=transferLive.receipts.get(key)?.ok||
-    String(localStorage.getItem(key)||'').startsWith('confirmed:')?'Отправлено':
-    locked?'Проверьте в iiko':'Отправить в iiko';
+  const receipt=transferLive.receipts.get(key);
+  btn.textContent=receipt?.ok||String(localStorage.getItem(key)||'').startsWith('confirmed:')?
+   'Отправлено':receipt&&!receipt.ok?'Ошибка отправки — проверьте iiko':
+   locked?'Проверьте в iiko':'Отправить в iiko';
  }
 }
 async function transferConnect(){
@@ -414,7 +474,10 @@ async function transferConnect(){
    transferStatus('Единый справочник подключён: '+transferLive.catalog.length+
      ' блюд, '+transferLive.stores.length+' складов, '+
      iikoDraftState.mappings.size+' подтверждённых соответствий. Одинаково для обеих вкладок.');
-   if(productionDocuments?.length)transferRender();
+   if(productionDocuments?.length){
+     transferRender();
+     void transferReconcile();
+   }
  }catch(e){
    transferLive.connected=false;
    transferStatus('Справочник: '+String(e.message||e),true);
