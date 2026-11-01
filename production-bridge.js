@@ -45,55 +45,112 @@ function planBridgeToggleCodeVisibility(){
   el.type=el.type==='password'?'text':'password';
   planBridgeRefreshSavedCode();
 }
-// Use the separate Supabase project when a browser's connection to the
-// primary project times out. Never automatically resend an uncertain request.
+// Two independent Supabase endpoints. Read-only calls can be tried on both:
+// never retry uncertain job creation or iiko document submissions.
+const planGuestReadActions=new Set(['device_status','latest','status','iiko_map_list']);
+const planGuestIdempotentActions=new Set(['claim','iiko_map_save','iiko_map_delete']);
+const planGuestTimeoutMs={primary:30000,relay:45000,request:45000,download:120000};
 async function planGuestTransport(route,action,extra={},isClaim=false,download=false){
   const {deviceId,token}=planGuestStored();
-  if(!isClaim&&(!deviceId||!token))throw Error('Сначала подключите MAIN с помощью кода из программы на компьютере');
+  if(!isClaim&&(!deviceId||!token))
+    throw Error('Сначала подключите MAIN с помощью кода из программы на компьютере');
   const headers={'Content-Type':'application/json',
     'apikey':route==='relay'?planGuestBackupKey:SUPABASE_KEY};
   if(!isClaim){headers['x-device-id']=deviceId;headers['x-browser-token']=token}
-  const timeoutMs=download?55000:route==='primary'?(action==='request'?12000:8000):22000;
-  const controller=new AbortController(),timeoutId=setTimeout(()=>controller.abort(),timeoutMs);
-  let response;
+  const timeoutMs=download?planGuestTimeoutMs.download:
+    action==='request'?planGuestTimeoutMs.request:planGuestTimeoutMs[route];
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
   try{
-    response=await fetch(route==='relay'?planGuestBackupApi:planGuestApi,{
-      method:'POST',headers,body:JSON.stringify({action,...extra}),
-      cache:'no-store',signal:controller.signal
-    });
-  }catch(e){
-    const err=new Error(e?.name==='AbortError'?
-      'Сервер не ответил за '+(timeoutMs/1000)+' секунд':
-      'Нет связи с сервером: '+(e.message||e));
-    err.planTransport=true;
-    throw err;
-  }finally{clearTimeout(timeoutId)}
-  if(download){
-    if(!response.ok)throw Error('Резервный сервер не отдал Excel (HTTP '+response.status+')');
-    return response;
-  }
-  const data=await response.json().catch(()=>({ok:false,error:'Некорректный ответ сервера'}));
-  if(!response.ok||!data.ok)throw Error(data.error||'Ошибка сервера '+response.status);
-  return data;
+    // Keep the timeout active until the ENTIRE response body is read, not
+    // merely until headers arrive (important for large XLSX files).
+    let response;
+    try{
+      response=await fetch(route==='relay'?planGuestBackupApi:planGuestApi,{
+        method:'POST',headers,body:JSON.stringify({action,...extra}),
+        cache:'no-store',signal:controller.signal
+      });
+      if(download){
+        if(!response.ok)throw Error('Excel недоступен (HTTP '+response.status+')');
+        return await response.arrayBuffer();
+      }
+      const result=await response.json().catch(()=>({ok:false,error:'Некорректный ответ сервера'}));
+      if(!response.ok||!result.ok)
+        throw Error(result.error||'Ошибка сервера (HTTP '+response.status+')');
+      return result;
+    }catch(e){
+      if(controller.signal.aborted||e?.name==='AbortError'){
+        const problem=new Error('Сервер не ответил за '+Math.round(timeoutMs/1000)+' секунд');
+        problem.planTransport=true;throw problem;
+      }
+      if(e instanceof TypeError||/failed to fetch|networkerror|load failed/i.test(String(e.message||''))){
+        const problem=new Error('Сетевое соединение прервалось: '+String(e.message||e));
+        problem.planTransport=true;throw problem;
+      }
+      throw e;
+    }
+  }finally{clearTimeout(timer)}
+}
+// Race the primary/backup for READS, starting the second shortly after the
+// first. A temporarily slow server no longer forces a 30+45 second serial
+// wait, nor does a failed backup become permanently preferred.
+async function planGuestReadRace(action,extra={},download=false){
+ const first=planGuestPreferredRoute;
+ const second=first==='primary'?'relay':'primary';
+ let winner='';
+ const run=async(route)=>{
+   const result=await planGuestTransport(route,action,extra,false,download);
+   if(!winner){winner=route;planGuestPreferredRoute=route}
+   return result;
+ };
+ const a=run(first);
+ const b=new Promise((resolve,reject)=>{
+   setTimeout(()=>{
+     if(winner){resolve(null);return;}
+     run(second).then(resolve,reject);
+   },1300);
+ });
+ try{return await Promise.any([a,b])}
+ catch(error){
+   const failures=error?.errors||[error];
+   const detail=failures.map((e,i)=>
+     (i===0?(first==='primary'?'Основной':'Резервный'):
+       (second==='primary'?'Основной':'Резервный'))+': '+String(e.message||e)).join('; ');
+   const combined=new Error('Оба канала недоступны. '+detail);
+   combined.planTransport=failures.some(x=>x?.planTransport);
+   throw combined;
+ }
 }
 async function planGuestFetch(action,extra={},isClaim=false){
-  if(planGuestPreferredRoute==='relay')
-    return planGuestTransport('relay',action,extra,isClaim);
-  try{
-    return await planGuestTransport('primary',action,extra,isClaim);
-  }catch(e){
-    if(!e.planTransport)throw e;
-    planGuestPreferredRoute='relay';
-    if(action==='request')
-      throw Error('Основной сервер не подтвердил создание задания. Повторно его не отправляю, чтобы не создать дубль. Нажмите «Открыть последний готовый файл»; резервный канал уже включён.');
-    const status=document.getElementById('planBridgeStatus');
-    if(status)status.textContent='Основной сервер не ответил. Проверяю через резервный канал…';
-    try{return await planGuestTransport('relay',action,extra,isClaim)}
-    catch(other){
-      throw Error('Основной сервер недоступен ('+(e.message||e)+
-        '), резервный канал: '+(other.message||other));
-    }
-  }
+ if(planGuestReadActions.has(action)){
+   const started=Date.now();
+   try{return await planGuestReadRace(action,extra)}
+   catch(error){
+     // One safe retry after a FAST transient network failure. Never retry
+     // after lengthy timeouts; never issue the same CREATE request twice.
+     if(!error.planTransport||Date.now()-started>15000)throw error;
+     await new Promise(resolve=>setTimeout(resolve,1100));
+     return await planGuestReadRace(action,extra);
+   }
+ }
+ const route=planGuestPreferredRoute;
+ try{return await planGuestTransport(route,action,extra,isClaim)}
+ catch(e){
+   if(!e.planTransport)throw e;
+   if(action==='request')
+     throw Error('Связь оборвалась при создании задания. Повторно его автоматически не отправляю, чтобы не создать дубль. Проверьте «Открыть последний готовый файл».');
+   if(!planGuestIdempotentActions.has(action))throw e;
+   // Pairing and mapping upserts/deletions are idempotent; job creation isn't.
+   const other=route==='primary'?'relay':'primary';
+   try{
+     const result=await planGuestTransport(other,action,extra,isClaim);
+     planGuestPreferredRoute=other;
+     return result;
+   }catch(otherError){
+     throw Error('Не удалось связаться с MAIN. Первый канал: '+
+       String(e.message||e)+'; второй: '+String(otherError.message||otherError));
+   }
+ }
 }
 async function planBridgeCall(action,extra={}){ return planGuestFetch(action,extra); }
 // A browser can be paired to an obsolete MAIN record. Do not queue new jobs
@@ -119,15 +176,14 @@ async function planGuestDownloadExcel(url,jobId,statusCallback){
  const status=typeof statusCallback==='function'?statusCallback:()=>{};
  let relayError='';
  try{
-   status('Скачиваю готовый Excel через защищённый канал MAIN…');
-   const response=await planGuestTransport('relay','download',{job_id:jobId},false,true);
-   const data=await response.arrayBuffer();
+   status('Скачиваю Excel через основной и резервный каналы MAIN (до 120 секунд)…');
+   const data=await planGuestReadRace('download',{job_id:jobId},true);
    if(data.byteLength<4||new Uint8Array(data,0,2).some((v,i)=>v!==[80,75][i]))
      throw Error('Сервер вернул не Excel (XLSX).');
    return data;
  }catch(e){relayError=String(e.message||e);}
  try{
-   status('Резервный канал недоступен. Проверяю прямое скачивание из хранилища…');
+   status('Каналы MAIN не ответили. Пробую прямую ссылку на готовый Excel…');
    // Refresh URL: its signature expires, especially after a long relay timeout.
    let direct=url;
    try{
@@ -139,7 +195,7 @@ async function planGuestDownloadExcel(url,jobId,statusCallback){
    if(u.protocol!=='https:'||u.hostname!=='dwdunpyzcfdwokoczenl.supabase.co'||
       !u.pathname.includes('/storage/v1/object/sign/'))
      throw Error('Неверный адрес Excel на сервере');
-   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
+   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),120000);
    try{
      const response=await fetch(u.href,{cache:'no-store',signal:controller.signal});
      if(!response.ok)throw Error('HTTP '+response.status);
