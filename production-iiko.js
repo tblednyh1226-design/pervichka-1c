@@ -325,9 +325,11 @@ function productionBuild(){
     throw Error('В плане есть некорректные количества: '+invalidValues.slice(0,7).join('; ')+
       '. Исправьте файл, чтобы не формировать неправильные перемещения.');
   // The PK→BK document precedes all BK-origin transfers.
-  const ordered=[...routes.entries()].sort(([ak],[bk])=>
-    (ak==='Правда кухня → Бухара кухня'?-1:0)-
-    (bk==='Правда кухня → Бухара кухня'?-1:0));
+  // First receive all non-PR pastry in BK, then send BK→BR pastry,
+  // and only after that other BK→outlet drafts.
+  const order=route=>route==='Правда кухня → Бухара кухня'?0:
+    route==='Бухара кухня → Бухара раздача'?1:2;
+  const ordered=[...routes.entries()].sort(([ak],[bk])=>order(ak)-order(bk));
   productionDocuments=ordered.map(([route,items])=>{
     const {from,to}=totals.get(route);
     return {type:'transfer',date:productionSheetName,source:from,target:to,
