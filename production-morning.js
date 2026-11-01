@@ -290,6 +290,19 @@ function morningAnalyze(book,date){
   ];
   return {sheet,date,header,columns,selected:chosen,bounds,documents,warnings,needsColumn:false};
 }
+// The same iiko product resolver is used for the cooking act and transfers.
+function morningMappedName(name){
+ if(typeof iikoDraftState==='undefined'||!iikoDraftState.catalogCount||
+    !iikoDraftState.mappingLoaded||typeof iikoDraftResolveProduct!=='function')
+   return 'Ожидает сверки с iiko';
+ const r=iikoDraftResolveProduct({name});
+ return r.product?.name||'Требует сопоставления';
+}
+function morningRefreshMatchLabels(){
+ document.querySelectorAll('[data-morning-match]').forEach(el=>{
+   el.textContent=morningMappedName(el.dataset.morningMatch);
+ });
+}
 function morningPrintResult(){
   const area=document.getElementById('morningPreview');
   const status=document.getElementById('morningStatus');
@@ -303,8 +316,8 @@ function morningPrintResult(){
   const cards=r.documents.map(d=>{
     const sum=d.items.reduce((s,x)=>s+x.quantity,0);
     // Weight is kept in the source records for validation, but not displayed in the act preview.
-    const body=d.items.map(x=>'<tr><td>'+morningEscape(x.name)+'</td><td>'+morningEscape(x.quantity)+'</td></tr>').join('');
-    return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable morning-acts-table"><thead><tr><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
+    const body=d.items.map(x=>'<tr><td>'+morningEscape(x.name)+'</td><td data-morning-match="'+morningEscape(x.name)+'">'+morningEscape(morningMappedName(x.name))+'</td><td>'+morningEscape(x.quantity)+'</td></tr>').join('');
+    return '<details open><summary><b>Акт приготовления · '+morningEscape(d.warehouse)+'</b> · '+d.items.length+' поз. · '+sum+' шт.</summary><div class="tablewrap"><table class="nomtable morning-acts-table"><thead><tr><th>Блюдо из плана</th><th>Номенклатура iiko</th><th>Количество</th></tr></thead><tbody>'+body+'</tbody></table></div></details>'
   }).join('');
   const warnings=r.warnings.length?'<p style="color:#9d4b17"><b>Проверить:</b> '+r.warnings.map(morningEscape).join('; ')+'</p>':'';
   const slices=r.documents.flatMap(d=>d.items.filter(x=>x.conversionFactor===8));
