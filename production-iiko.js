@@ -97,9 +97,10 @@ function productionOpenMainConnection(){
 async function productionMainConnectionStatus(){
  const el=document.getElementById('prodMainConnection');
  if(!el)return;
+ el.textContent='Проверяю MAIN через основной и резервный серверы (до 45 секунд)…';
  try{
    const r=await planGuestCheckConnection(false);
-   el.textContent=r.online?'MAIN подключён и на связи. Можно получать файлы.':
+   el.textContent=r.online?'MAIN подключён через '+(planGuestPreferredRoute==='relay'?'резервный':'основной')+' сервер. Файлы доступны.':
      !r.last?'Этот браузер сохранён под неактивным MAIN. Подключите действующий код на вкладке «Акт приготовления».':
      'MAIN по сохранённому коду сейчас не отвечает. Проверьте агент MAIN либо обновите код подключения.';
  }catch(e){el.textContent=String(e.message||e);}
@@ -166,7 +167,7 @@ async function productionMainLoadLatest(){
    .map(id=>document.getElementById(id)).filter(Boolean);
  productionMainBusy=true;buttons.forEach(btn=>btn.disabled=true);
  const status=document.getElementById('prodstatus');
- if(status)status.textContent='Ищу последний готовый Excel на сервере. Новое задание MAIN не создаётся…';
+ if(status)status.textContent='Проверяю основной и резервный серверы. Ищу последний готовый Excel без нового задания…';
  try{
    const latest=await planGuestFetch('latest');
    if(!latest?.available||!latest.download_url||!latest.job_id){
