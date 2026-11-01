@@ -208,6 +208,7 @@ function productionSelectSheet(){
  document.getElementById('prodstatus').textContent=
   'Лист: '+productionSheetName+'. Маршруты: ПК→БК (вся выпечка кроме ПР), БК→БР (только выпечка), БК→остальные точки. ПК→ПР не создаётся.'+
   (unknown.length?' Есть нераспознанные колонки: '+unknown.map(x=>x.name).join(', ')+'.':'');
+ if(typeof transferRowDate==='function')transferRowDate();
 }
 function productionQuantity(v){
  if(typeof v==='number')return Number.isFinite(v)?v:null;
