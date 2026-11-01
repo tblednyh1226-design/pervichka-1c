@@ -28,6 +28,7 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 <main>
  <div class="top"><div><h1>Списание продукции</h1><p class="muted">Накапливайте позиции в черновике и отправляйте готовое списание в общий журнал. Отправка в 1С не выполняется.</p></div><span id="stateBadge" class="status">Подключение…</span></div>
  <p id="notice" class="notice" role="status">Проверяю вход и справочник организации…</p>
+ <section id="loginCard" class="card" hidden><h2>Войти в Помогатор</h2><p class="muted">Для сохранения документов в общем журнале используется учётная запись Помогатора.</p><form id="loginForm"><div class="formgrid"><label>Электронная почта<input id="loginEmail" type="email" autocomplete="username" required></label><label>Пароль<input id="loginPassword" type="password" autocomplete="current-password" required></label><label style="justify-content:end"><span>&nbsp;</span><button type="submit" class="primary" id="loginButton">Войти</button></label></div></form><p id="loginError" class="muted" role="status"></p></section>
  <div id="screen" hidden>
   <section class="card"><div class="sectiontitle"><h2>Документ</h2><button type="button" id="newBtn">+ Новое списание</button></div>
    <fieldset id="editorFields">
@@ -54,5 +55,5 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-<script src="writeoffs.js?v=20261101-cloud-3"></script>
+<script src="writeoffs.js?v=20261101-cloud-4"></script>
 </body></html>
