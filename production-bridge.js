@@ -159,13 +159,31 @@ async function planBridgePair(){
   if(!/^[0-9a-f]{32}$/.test(token)){planBridgeStatus('Введите 32-символьный код, который показал установщик на MAIN.',true);return;}
   try{
     planBridgeStatus('Проверяю код MAIN…');
+    const previousDevice=planGuestStored().deviceId;
     const r=await planGuestFetch('claim',{browser_token:token},true);
     localStorage.setItem('pomogator_guest_device_id',r.device_id);
     localStorage.setItem('pomogator_guest_browser_token',token);
     if(el){el.value=token;el.type='password';}
     planBridgeRefreshSavedCode();
     planBridgeStatus('MAIN подключён. Код сохранён на этом устройстве и восстановится при следующем открытии Помогатора.');
+    if(previousDevice!==r.device_id){
+      // Do not reuse the previous MAIN's iiko catalogue or paired lookups.
+      if(typeof iikoLiveState!=='undefined'){
+        iikoLiveState.connected=false;iikoLiveState.mainDevice='';
+      }
+      if(typeof transferLive!=='undefined'){
+        transferLive.connected=false;
+        transferLive.catalog=[];transferLive.catalogById.clear();transferLive.stores=[];
+      }
+      if(typeof iikoDraftState!=='undefined'){
+        iikoDraftState.catalog=new Map();iikoDraftState.catalogList=[];iikoDraftState.catalogCount=0;
+      }
+    }
     if(typeof iikoDraftLoadMappings==='function')await iikoDraftLoadMappings();
+    if(typeof productionDocuments!=='undefined'&&productionDocuments.length&&
+       typeof transferConnect==='function')void transferConnect();
+    else if(typeof morningState!=='undefined'&&morningState.result&&
+       typeof iikoLiveEnsureCatalog==='function')void iikoLiveEnsureCatalog();
     await planBridgeDeviceStatus();
   }catch(e){planBridgeStatus('Ошибка подключения: '+(e.message||e),true)}
 }
@@ -173,6 +191,13 @@ function planBridgeDisconnect(){
   if(!window.confirm('Забыть сохранённый 32-символьный код MAIN на этом устройстве и отключить доступ к файлу?'))return;
   localStorage.removeItem('pomogator_guest_device_id');
   localStorage.removeItem('pomogator_guest_browser_token');
+  if(typeof iikoLiveState!=='undefined'){iikoLiveState.connected=false;iikoLiveState.mainDevice=''}
+  if(typeof transferLive!=='undefined'){
+    transferLive.connected=false;transferLive.catalog=[];transferLive.catalogById.clear();transferLive.stores=[];
+  }
+  if(typeof iikoDraftState!=='undefined'){
+    iikoDraftState.catalog=new Map();iikoDraftState.catalogList=[];iikoDraftState.catalogCount=0;
+  }
   planBridgeBytes=null;
   const codeInput=document.getElementById('planBridgeCodeInput');
   if(codeInput){codeInput.value='';codeInput.type='password';}
