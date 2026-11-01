@@ -315,6 +315,7 @@ function morningPrintResult(){
   area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Источник количеств — iiko (столбец <b>'+morningEscape(r.selected.label)+'</b>).</p>'+warnings+conversionNote+cards;
   status.textContent='Предпросмотр готов. Это НЕ документы iiko. Никаких перемещений, расходных и проведения.';
   if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
+  if(typeof iikoLiveEnsureCatalog==='function')void iikoLiveEnsureCatalog();
 }
 function morningPrepareBook(book,name,bytes=null){
   morningState.book=book;morningState.bytes=bytes;morningState.fileName=name||'План производства.xlsx';
