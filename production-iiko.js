@@ -1,6 +1,6 @@
 /* Production plan → iiko preparation; does not contact iiko or post documents. */
 let productionBook=null,productionBytes=null,productionRows=[],productionDocuments=[],productionFileName='',productionSheetName='';
-const productionSkip=/^(всего|итого|итого фасовка|вес|цена|разница|покупатели|№|наименование|меню)$/i;
+const productionSkip=/^(всего.*|итого.*|сумма.*|iiko|iiкo|айко|итого фасовка|вес|цена|разница|покупатели|№|наименование|меню)$/i;
 const productionGroups=/^(холодные закуски|первые блюда|блюда для завтраков|вторые\s+блюда|гарниры|напитки|хлеб|дополнительный ассортимент|выпечка|комплексные обеды)$/i;
 function productionNorm(v){return String(v??'').trim().replace(/\s+/g,' ').toLowerCase().replace(/ё/g,'е')}
 function productionText(v){return typeof esc==='function'?esc(v):String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -31,6 +31,30 @@ async function productionOpen(){
   productionSelectSheet();
  }catch(e){productionError(e)}
 }
+// The plan is shared between tabs; reusing it must never redownload the workbook.
+function productionUseMorningBook(){
+ const status=document.getElementById('prodstatus');
+ if(typeof morningState==='undefined'||!morningState.book){
+   if(status)status.textContent='Сначала получите план с MAIN на вкладке «Акт приготовления» или загрузите Excel здесь.';
+   return false;
+ }
+ productionBook=morningState.book;
+ productionBytes=morningState.bytes||null;
+ productionFileName=morningState.fileName||'ПЛАН ПРОИЗВОДСТВА.xlsx';
+ const select=document.getElementById('prodsheet');
+ if(!select)return false;
+ select.innerHTML=productionBook.SheetNames.map((name,i)=>
+   '<option value="'+i+'">'+productionText(name)+'</option>').join('');
+ const selected=morningState.result?.sheet||'';
+ const index=productionBook.SheetNames.indexOf(selected);
+ select.value=String(index>=0?index:productionBook.SheetNames.length-1);
+ try{
+   productionSelectSheet();
+   if(status)status.textContent='Использую уже полученный Excel «'+productionFileName+
+     '». Для перемещений выбирайте день и столбцы получателей; повторное скачивание не требуется.';
+   return true;
+ }catch(e){productionError(e);return false}
+}
 function productionSelectSheet(){
  if(!productionBook)return;
  const i=Number(document.getElementById('prodsheet').value);
@@ -54,60 +78,112 @@ function productionSelectSheet(){
  const container=document.getElementById('prodrecipients');
  container.innerHTML=options.map((o,k)=>{
   const isShop=/правд|бухар|бестуж|модул|мега|этм|редм|мед экспресс/i.test(o.name);
-  return '<div class="orgrow"><span><b>'+productionText(o.name)+'</b><small>Столбец '+(o.col+1)+'</small></span><select data-col="'+o.col+'" aria-label="Роль '+productionText(o.name)+'"><option value="customer" '+(!isShop?'selected':'')+'>Покупатель (в производство)</option><option value="point" '+(isShop?'selected':'')+'>Точка (перемещение)</option><option value="ignore">Не учитывать</option></select></div>'
+  return '<div class="orgrow"><span><b>'+productionText(o.name)+'</b><small>Столбец '+(o.col+1)+'</small></span><select data-col="'+o.col+'" aria-label="Роль '+productionText(o.name)+'"><option value="point" '+(isShop?'selected':'')+'>Получатель перемещения</option><option value="ignore" '+(!isShop?'selected':'')+'>Не учитывать</option></select></div>'
  }).join('');
- productionDocuments=[];document.getElementById('prodresult').innerHTML='';
- document.getElementById('prodstatus').textContent='Лист: '+productionSheetName+'. Укажите роли получателей и кухню, затем сформируйте документы.';
+ productionDocuments=[];document.getElementById('prodresult').innerHTML='';document.getElementById('prodresult').hidden=true;
+ document.getElementById('prodstatus').textContent='Лист: '+productionSheetName+'. Укажите склад-отправитель и получателей, затем сформируйте черновики перемещений.';
+}
+function productionQuantity(v){
+ if(typeof v==='number')return Number.isFinite(v)?v:null;
+ const raw=String(v??'').trim().replace(/\s/g,'').replace(',','.');
+ if(!raw||!/^\d+(?:\.\d+)?$/.test(raw))return null;
+ const n=Number(raw);return Number.isFinite(n)?n:null;
 }
 function productionBuild(){
+ productionDocuments=[];
+ const result=document.getElementById('prodresult');
+ if(result){result.hidden=true;result.innerHTML=''}
  try{
-  if(!productionBook)throw Error('Загрузите план производства');
+  if(!productionBook||!productionSheetName||!window.productionContext)throw Error('Сначала получите план Excel и выберите дату');
   const kitchen=document.getElementById('prodkitchen').value.trim();
-  if(!kitchen)throw Error('Укажите склад приготовления');
-  const roles=[...document.querySelectorAll('#prodrecipients select')].map(s=>({col:Number(s.dataset.col),role:s.value,name:productionContext.heads[Number(s.dataset.col)]}));
-  if(!roles.some(r=>r.role!=='ignore'))throw Error('Не выбраны получатели');
-  const aggregates=new Map(),transfers=new Map(),warnings=[],unmatched=[];
-  let section='',count=0;
-  for(let i=productionContext.header+1;i<productionRows.length;i++){
-   const row=productionRows[i],name=String(row[1]??'').trim(),code=String(row[0]??'').trim();
-   if(!name){if(productionGroups.test(String(row[0]??'').trim()))section=String(row[0]).trim();continue}
-   if(productionGroups.test(String(row[0]??'').trim())){section=String(row[0]).trim();continue}
-   if(!/^[\d]+$/.test(code)){continue} // intentionally excludes rows without source code, flagged below if quantities
-   const lines=roles.map(r=>({...r,quantity:Number(row[r.col]||0)})).filter(r=>r.role!=='ignore'&&Number.isFinite(r.quantity)&&r.quantity>0);
-   if(!lines.length)continue;
-   const key=code+'|'+name+'|'+String(row[2]??'');
-   const total=lines.reduce((n,r)=>n+r.quantity,0);
-   if(aggregates.has(key)){warnings.push('Повтор кода/позиции: '+code+' — '+name+' (строка '+(i+1)+')')}
-   let item=aggregates.get(key);
-   if(!item){item={code,name,weight:row[2]??'',group:section,quantity:0};aggregates.set(key,item)}
-   item.quantity+=total;count++;
-   for(const r of lines)if(r.role==='point'){
-    const label=String(r.name).trim();if(!transfers.has(label))transfers.set(label,new Map());
-    const m=transfers.get(label),existing=m.get(key);
-    if(existing)existing.quantity+=r.quantity;
-    else m.set(key,{code,name,weight:row[2]??'',group:section,quantity:r.quantity});
+  if(!kitchen)throw Error('Укажите склад-отправитель');
+  const selectors=[...document.querySelectorAll('#prodrecipients select')];
+  const roles=selectors.filter(x=>x.value==='point').map(x=>{
+    const col=Number(x.dataset.col);
+    return {col,name:String(window.productionContext.heads[col]??'').trim()};
+  });
+  if(!roles.length)throw Error('Выберите хотя бы один столбец «Получатель перемещения»');
+  const badRole=roles.find(x=>!x.name||productionSkip.test(x.name)||productionNorm(x.name)==='iiko');
+  if(badRole)throw Error('Недопустимый получатель: '+badRole.name);
+  const same=roles.find(x=>productionNorm(x.name)===productionNorm(kitchen));
+  if(same)throw Error('Склад-отправитель не может совпадать с получателем «'+same.name+'»');
+  const transfers=new Map(roles.map(r=>[r.name,new Map()]));
+  const warnings=[],withoutCode=[],invalidValues=[];
+  let accepted=0;
+  for(let i=window.productionContext.header+1;i<productionRows.length;i++){
+   const row=productionRows[i]||[];
+   const name=String(row[1]??'').trim(),code=String(row[0]??'').trim();
+   if(!name||productionGroups.test(code)||productionGroups.test(name))continue;
+   const entries=[];
+   for(const recipient of roles){
+    const raw=row[recipient.col];
+    const quantity=productionQuantity(raw);
+    if(raw!==null&&raw!==undefined&&String(raw).trim()!==''&&quantity===null)
+      invalidValues.push('Строка '+(i+1)+', '+recipient.name+': некорректное количество «'+String(raw).slice(0,35)+'»');
+    if(quantity!==null&&quantity>0)entries.push({...recipient,quantity});
+   }
+   if(!entries.length)continue;
+   if(!/^\d+$/.test(code)){
+    withoutCode.push('Строка '+(i+1)+': '+name+' — нет числового кода');
+    continue;
+   }
+   const weight=String(row[2]??'').trim();
+   const key=code+'|'+name+'|'+weight;
+   for(const recipient of entries){
+    const entriesForTarget=transfers.get(recipient.name);
+    const existing=entriesForTarget.get(key);
+    if(existing){
+      warnings.push('Повтор кода/блюда '+code+' — '+name+', получатель '+recipient.name+
+        ' (строка '+(i+1)+'). Количества сложены.');
+      existing.quantity+=recipient.quantity;
+    }else{
+      entriesForTarget.set(key,{code,name,weight,quantity:recipient.quantity,sourceRow:i+1});
+    }
+    accepted++;
    }
   }
-  // Rows with quantities but no numeric code must not silently become documents.
-  for(let i=productionContext.header+1;i<productionRows.length;i++){
-   const row=productionRows[i],name=String(row[1]??'').trim(),code=String(row[0]??'').trim();
-   if(!name||/^\d+$/.test(code))continue;
-   if(roles.some(r=>r.role!=='ignore'&&Number(row[r.col])>0)&&!productionGroups.test(String(row[0]??'').trim()))unmatched.push('Строка '+(i+1)+': '+name+' — нет числового кода');
-  }
-  const items=[...aggregates.values()];
-  if(!items.length)throw Error('Не найдены блюда с числовыми кодами и положительными количествами');
-  productionDocuments=[{type:'production',date:productionSheetName,kitchen,items},...[...transfers.entries()].map(([target,m])=>({type:'transfer',date:productionSheetName,source:kitchen,target,items:[...m.values()]}))];
-  const grand=items.reduce((a,x)=>a+x.quantity,0),moved=[...transfers.values()].flatMap(m=>[...m.values()]).reduce((a,x)=>a+x.quantity,0);
-  const docHtml=productionDocuments.map((d,k)=>'<details '+(k===0?'open':'')+'><summary><b>'+(d.type==='production'?'Акт приготовления':'Перемещение → '+productionText(d.target))+'</b> · '+d.items.length+' поз. · '+d.items.reduce((n,x)=>n+x.quantity,0)+' шт.</summary><div class="tablewrap"><table class="nomtable"><thead><tr><th>Код</th><th>Наименование</th><th>Кол-во</th></tr></thead><tbody>'+d.items.map(x=>'<tr><td>'+productionText(x.code)+'</td><td>'+productionText(x.name)+'</td><td>'+x.quantity+'</td></tr>').join('')+'</tbody></table></div></details>').join('');
-  const issues=[...warnings,...unmatched];
-  document.getElementById('prodresult').innerHTML='<h3>Предпросмотр · '+productionText(productionSheetName)+'</h3><p>Кухня: <b>'+productionText(kitchen)+'</b>. Позиций приготовления: <b>'+items.length+'</b>. Количество: <b>'+grand+'</b>. В перемещениях: <b>'+moved+'</b>. Покупатели и другие направления: <b>'+(grand-moved)+'</b>.</p>'+(issues.length?'<p style="color:#9d4b17"><b>Требуют проверки ('+issues.length+'):</b><br>'+issues.slice(0,40).map(productionText).join('<br>')+'</p>':'<p>Строк без кода с положительным количеством не обнаружено.</p>')+docHtml+'<p class="muted">Это подготовленные документы, не документы iiko. Экспорт JSON — технический пакет для будущего защищённого подключения API. Никаких изменений в iiko не производится.</p><button class="primary" onclick="productionExport()">Скачать пакет документов JSON</button>';
-  document.getElementById('prodstatus').textContent='Подготовлено документов: '+productionDocuments.length+'. Строк товаров: '+count+'. Проверок: '+issues.length+'.';
- }catch(e){productionError(e)}
+  productionDocuments=[...transfers.entries()]
+    .filter(([,items])=>items.size>0)
+    .map(([target,items])=>({
+      type:'transfer',date:productionSheetName,source:kitchen,target,items:[...items.values()],
+      status:'DRAFT',posted:false
+    }));
+  if(!productionDocuments.length)throw Error('Нет положительных количеств для выбранных получателей');
+  const escaped=productionText;
+  const warningsAll=[...warnings,...withoutCode,...invalidValues];
+  const cards=productionDocuments.map(doc=>{
+    const total=doc.items.reduce((n,item)=>n+item.quantity,0);
+    return '<details><summary><b>'+escaped(doc.source)+' → '+escaped(doc.target)+'</b> · '+
+      doc.items.length+' поз. · '+total+' шт.</summary><div class="tablewrap"><table class="nomtable">'+
+      '<thead><tr><th>Код</th><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+
+      doc.items.map(item=>'<tr><td>'+escaped(item.code)+'</td><td>'+escaped(item.name)+
+       '</td><td>'+item.quantity+'</td></tr>').join('')+
+      '</tbody></table></div></details>';
+  }).join('');
+  result.innerHTML='<h3>Черновики перемещений · '+escaped(productionSheetName)+'</h3>'+
+    '<p>Склад-отправитель: <b>'+escaped(kitchen)+'</b>. Документов: <b>'+
+    productionDocuments.length+'</b>. Строк: <b>'+accepted+'</b>.</p>'+
+    (warningsAll.length?
+     '<p style="color:#9d4b17"><b>Проверить ('+warningsAll.length+'):</b> '+
+       warningsAll.slice(0,40).map(escaped).join('; ')+'</p>':
+     '<p>Строк без числового кода, повторов и некорректных количеств не обнаружено.</p>')+
+    cards+
+    '<p class="muted">Черновики для проверки: склады обозначены названиями из плана, номенклатура ещё не сопоставлена с iiko. В iiko ничего не создаётся и не проводится.</p>'+
+    '<button onclick="productionExport()">Скачать черновики перемещений (JSON)</button>';
+  result.hidden=false;
+  document.getElementById('prodstatus').textContent='Готово: '+
+    productionDocuments.length+' черновиков перемещений за '+productionSheetName+
+    '. Замечаний: '+warningsAll.length+'. Выгрузка в iiko не выполнялась.';
+ }catch(e){
+  productionDocuments=[];
+  if(result){result.innerHTML='';result.hidden=true}
+  productionError(e);
+ }
 }
 function productionExport(){
  if(!productionDocuments.length)return;
- const payload={schema:'pomogator.iiko-preparation.v1',sourceFile:productionFileName,sourceSheet:productionSheetName,createdAt:new Date().toISOString(),posted:false,documents:productionDocuments};
+ const payload={schema:'pomogator.iiko-transfers-draft.v1',sourceFile:productionFileName,sourceSheet:productionSheetName,createdAt:new Date().toISOString(),posted:false,documents:productionDocuments};
  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json;charset=utf-8'});
- const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='iiko-preparation-'+productionSheetName.replace(/[^\wа-яё.-]/gi,'_')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
+ const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='iiko-transfers-draft-'+productionSheetName.replace(/[^\wа-яё.-]/gi,'_')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
 }
 document.addEventListener('DOMContentLoaded',productionInit);
