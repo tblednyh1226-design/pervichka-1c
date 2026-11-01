@@ -323,6 +323,7 @@ function iikoDraftBuildData(){
 }
 // Runs automatically whenever the source plan, day, column, iiko catalogue or stores change.
 function iikoDraftAutoCheck(){
+   if(typeof morningRefreshMatchLabels==='function')morningRefreshMatchLabels();
   const plan=typeof morningState!=='undefined'?morningState.result:null;
   if(!plan||plan.needsColumn||!Array.isArray(plan.documents)||plan.documents.length!==2){
     iikoDraftInvalidate('Сначала получите Excel и сформируйте два акта за выбранную дату. Сверка запустится автоматически.');
@@ -339,6 +340,7 @@ function iikoDraftAutoCheck(){
   return iikoDraftCheck();
 }
 function iikoDraftCheck(){
+   if(typeof morningRefreshMatchLabels==='function')morningRefreshMatchLabels();
   iikoDraftInvalidate();
   try{
     const data=iikoDraftBuildData();
