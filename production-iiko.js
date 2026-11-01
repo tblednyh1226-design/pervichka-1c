@@ -373,6 +373,12 @@ function productionSelectDate(){
 }
 function productionSelectSheet(){
  if(!productionBook)return;
+ // Invalidate documents from the previous day BEFORE parsing a new sheet.
+ // An invalid compote/pastry boundary must never leave old documents sendable.
+ productionDocuments=[];
+ window.productionContext=null;
+ const previousResult=document.getElementById('prodresult');
+ if(previousResult){previousResult.hidden=true;previousResult.innerHTML='';}
  const i=Number(document.getElementById('prodsheet').value);
  productionSheetName=productionBook.SheetNames[i];
  if(!productionSheetName)throw Error('Выберите лист Excel.');
@@ -392,7 +398,9 @@ function productionSelectSheet(){
    row.slice(4).some(x=>productionPoint(x)));
  if(header<0)throw Error('Не найдена основная строка с заголовками точек');
  const heads=productionRows[header];
- const pastry=productionFindPastry(productionRows,header+1);
+ let pastry;
+ try{pastry=productionFindPastry(productionRows,header+1)}
+ catch(e){productionError(e);throw e}
  const pastryColumns=productionPastryColumns(productionRows,pastry.start,header,pastry.end);
  const allReceivers=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
    .filter(x=>x.name&&x.col>=4&&x.point&&
