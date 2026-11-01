@@ -16,6 +16,7 @@ function productionSwitchTab(which){
     button.setAttribute('aria-selected',active?'true':'false');
     button.tabIndex=active?0:-1;
   }
+  if(transfer&&typeof productionMainConnectionStatus==='function')void productionMainConnectionStatus();
   // Afternoon Excel is independent. Never auto-import the morning workbook.
 }
 document.addEventListener('DOMContentLoaded',()=>productionSwitchTab('cooking'));
