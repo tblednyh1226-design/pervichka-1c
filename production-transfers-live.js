@@ -2,7 +2,7 @@
    Cooking acts, their data and their API remain untouched. */
 const TRANSFER_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-transfers';
 const transferLive={connected:false,busy:false,stores:[],catalog:[],catalogById:new Map(),catalogByName:new Map(),
- mapped:new Map(),warehouse:new Map(),sending:new Set(),locks:new Set(),receipts:new Map(),sig:'',mappingEntries:[],editKeys:new Set(),mappingQueries:new Map()};
+ mapped:new Map(),warehouse:new Map(),sending:new Set(),locks:new Set(),receipts:new Map(),sig:'',mappingEntries:[],editKeys:new Set(),mappingQueries:new Map(),savedRows:[]};
 const transferEscape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const transferNorm=v=>String(v??'').toLowerCase().replace(/ё/g,'е').replace(/\s+/g,' ').trim();
 const transferPrefix=v=>String(v??'').split(/[（(]/,1)[0].trim();
@@ -107,15 +107,16 @@ function transferRenderMappingPanel(){
  const remembered=entries.filter(x=>x.product&&x.source==='saved').length;
  const missingList=entries.map((entry,i)=>({entry,i})).filter(x=>!x.entry.product||
    transferLive.editKeys.has(x.entry.key));
- const savedRows=[...saved.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ru'));
+ const savedRows=transferLive.savedRows=[...saved.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ru'));
  const savedHtml='<details class="transfer-saved-mappings"><summary>Запомненные соответствия MAIN ('+
    savedRows.length+')</summary>'+
   '<p class="muted">Общий справочник для приготовления и перемещений.</p>'+
   (savedRows.length?'<div class="tablewrap"><table class="nomtable"><thead>'+
-   '<tr><th>Блюдо из плана</th><th>Номенклатура iiko</th><th>Артикул</th></tr></thead><tbody>'+
-   savedRows.map(([key,row])=>'<tr><td>'+transferEscape(key)+'</td><td>'+
+   '<tr><th>Блюдо из плана</th><th>Номенклатура iiko</th><th>Артикул</th><th></th></tr></thead><tbody>'+
+   savedRows.map(([key,row],i)=>'<tr><td>'+transferEscape(key)+'</td><td>'+
      transferEscape(row.target_name)+'</td><td>'+
-     transferEscape(row.target_article||row.target_id||'')+'</td></tr>').join('')+
+     transferEscape(row.target_article||row.target_id||'')+'</td><td>'+
+     '<button type="button" onclick="transferDeleteSavedMapping('+i+')">Удалить</button></td></tr>').join('')+
    '</tbody></table></div>':'<p>Пока нет подтверждённых соответствий.</p>')+
   '</details>';
  const pending=!transferLive.connected?
@@ -161,6 +162,34 @@ function transferFocusMapping(di,li){
  const key=iikoDraftSourceKey(item.name);
  const index=transferLive.mappingEntries.findIndex(x=>x.key===key);
  if(index>=0)transferEditMapping(index);
+}
+async function transferDeleteSavedMapping(index){
+ const row=transferLive.savedRows[index];
+ if(!row)return;
+ const [key,product]=row;
+ if(!window.confirm('Удалить сохранённое соответствие «'+key+
+   '» → «'+product.target_name+'» для обеих вкладок?'))return;
+ if(transferLive.busy)return;
+ transferLive.busy=true;
+ transferRefreshSendButtons();
+ transferStatus('Удаляю сохранённое соответствие из MAIN…');
+ try{
+   const device=typeof planGuestStored==='function'?planGuestStored():null;
+   if(!device?.token||iikoDraftState.mappingDevice!==device.deviceId)
+     throw Error('Нет действующей привязки MAIN');
+   await planGuestFetch('iiko_map_delete',{source_key:key});
+   if(planGuestStored().deviceId!==device.deviceId)
+     throw Error('Привязка MAIN изменилась, обновите справочник');
+   iikoDraftState.mappings.delete(key);
+   iikoDraftRenderSaved();
+   iikoDraftAutoCheck();
+   transferStatus('Соответствие «'+key+'» удалено из общего справочника MAIN.');
+ }catch(e){
+   transferStatus('Не удалось удалить соответствие: '+String(e.message||e),true);
+ }finally{
+   transferLive.busy=false;
+   transferRender();
+ }
 }
 function transferFilterProduct(index){
  const entry=transferLive.mappingEntries[index];
@@ -344,11 +373,10 @@ async function transferConnect(){
      throw Error('Общий модуль сопоставлений не загружен');
    const pair=typeof planGuestStored==='function'?planGuestStored():null;
    if(!pair?.deviceId||!pair?.token)throw Error('Сначала подключите MAIN');
-   // Read saved MAIN correspondences even when the live iiko catalogue fails.
-   if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId)
-     await iikoDraftLoadMappings();
-   if(!iikoLiveState.connected||iikoLiveState.mainDevice!==pair.deviceId)
-     await iikoLiveConnect();
+   // Refresh BOTH saved mappings and the iiko catalog on every explicit
+   // connection; changes made on another browser become visible immediately.
+   await iikoDraftLoadMappings();
+   await iikoLiveConnect();
    if(!iikoLiveState.connected||iikoLiveState.mainDevice!==pair.deviceId)
      throw Error('iiko не подключена. Проверьте соединение на вкладке приготовления');
    if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId)
