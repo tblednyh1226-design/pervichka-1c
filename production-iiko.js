@@ -94,13 +94,13 @@ function productionBuild(){
  const result=document.getElementById('prodresult');
  if(result){result.hidden=true;result.innerHTML=''}
  try{
-  if(!productionBook||!productionSheetName)throw Error('Сначала получите план Excel и выберите дату');
+  if(!productionBook||!productionSheetName||!window.productionContext)throw Error('Сначала получите план Excel и выберите дату');
   const kitchen=document.getElementById('prodkitchen').value.trim();
   if(!kitchen)throw Error('Укажите склад-отправитель');
   const selectors=[...document.querySelectorAll('#prodrecipients select')];
   const roles=selectors.filter(x=>x.value==='point').map(x=>{
     const col=Number(x.dataset.col);
-    return {col,name:String(productionContext.heads[col]??'').trim()};
+    return {col,name:String(window.productionContext.heads[col]??'').trim()};
   });
   if(!roles.length)throw Error('Выберите хотя бы один столбец «Получатель перемещения»');
   const badRole=roles.find(x=>!x.name||productionSkip.test(x.name)||productionNorm(x.name)==='iiko');
@@ -110,7 +110,7 @@ function productionBuild(){
   const transfers=new Map(roles.map(r=>[r.name,new Map()]));
   const warnings=[],withoutCode=[],invalidValues=[];
   let accepted=0;
-  for(let i=productionContext.header+1;i<productionRows.length;i++){
+  for(let i=window.productionContext.header+1;i<productionRows.length;i++){
    const row=productionRows[i]||[];
    const name=String(row[1]??'').trim(),code=String(row[0]??'').trim();
    if(!name||productionGroups.test(code)||productionGroups.test(name))continue;
