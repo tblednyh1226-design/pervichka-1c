@@ -121,6 +121,31 @@ async function productionMainRequest(){
   if(button)button.disabled=false;
  }
 }
+function productionPoint(name){
+ const n=productionNorm(name).replace(/\s+/g,' ');
+ if(/^(раздача правды|правда раздача|пр)$/.test(n))return 'Правда раздача';
+ if(/^(раздача бухара|бухара раздача|бр)$/.test(n))return 'Бухара раздача';
+ if(/^этм(?: день| ночь)?$/.test(n))return 'ЭТМ';
+ if(/^бестужевская$/.test(n))return 'Бестужевская';
+ if(/^модул(?:ь)?$/.test(n))return 'Модуль';
+ if(/^мега$/.test(n))return 'МЕГА';
+ if(/^(редм|рэдмонд|редмонд)$/.test(n))return 'Рэдмонд';
+ if(/^(мед экспресс|медэкспресс)$/.test(n))return 'Мед экспресс';
+ return null;
+}
+function productionFindPastry(rows,start){
+ let first=-1,last=rows.length;
+ for(let r=start;r<rows.length;r++){
+  const marker=productionNorm(rows[r]?.[0]||rows[r]?.[1]||'');
+  if(first<0){
+   if(marker==='выпечка')first=r;
+  }else if(/^(завтрак|завтраки|комплексн|заказ|питание сотрудников|бизнес-ланч)/.test(marker)){
+   last=r;break;
+  }
+ }
+ if(first<0)throw Error('На листе нет блока «Выпечка». Проверьте выбранную дату и структуру плана.');
+ return {start:first,end:last};
+}
 function productionSelectSheet(){
  if(!productionBook)return;
  const i=Number(document.getElementById('prodsheet').value);
@@ -136,18 +161,34 @@ function productionSelectSheet(){
    productionBook.Sheets[productionSheetName]=selected.Sheets[productionSheetName];
  }
  productionRows=XLSX.utils.sheet_to_json(productionBook.Sheets[productionSheetName],{header:1,defval:'',raw:true});
- const header=productionRows.findIndex(row=>productionNorm(row[0])==='№'&&productionNorm(row[1])==='наименование');
- if(header<0)throw Error('Не найдена строка заголовков (№ / Наименование)');
+ // The plan has TWO "Наименование" headers. The first is before the main menu;
+ // the second repeats before pastry. Always use the first header.
+ const header=productionRows.findIndex(row=>productionNorm(row[1])==='наименование'&&
+   row.slice(4).some(x=>productionPoint(x)));
+ if(header<0)throw Error('Не найдена основная строка с заголовками точек');
  const heads=productionRows[header];
- const options=heads.map((v,col)=>({name:String(v??'').trim(),col})).filter(x=>x.name&&x.col>=4&&!productionSkip.test(x.name));
- window.productionContext={header,heads,options};
+ const pastry=productionFindPastry(productionRows,header+1);
+ const options=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
+   .filter(x=>x.name&&x.col>=4&&x.point&&x.point!=='Бухара раздача');
+ const unknown=heads.map((v,col)=>({name:String(v??'').trim(),col}))
+   .filter(x=>x.name&&x.col>=4&&!productionSkip.test(x.name)&&
+      !productionPoint(x.name));
+ window.productionContext={header,heads,options,pastry,unknown};
  const container=document.getElementById('prodrecipients');
- container.innerHTML=options.map((o,k)=>{
-  const isShop=/правд|бухар|бестуж|модул|мега|этм|редм|мед экспресс/i.test(o.name);
-  return '<div class="orgrow"><span><b>'+productionText(o.name)+'</b><small>Столбец '+(o.col+1)+'</small></span><select data-col="'+o.col+'" aria-label="Роль '+productionText(o.name)+'"><option value="point" '+(isShop?'selected':'')+'>Получатель перемещения</option><option value="ignore" '+(!isShop?'selected':'')+'>Не учитывать</option></select></div>'
- }).join('');
- productionDocuments=[];document.getElementById('prodresult').innerHTML='';document.getElementById('prodresult').hidden=true;
- document.getElementById('prodstatus').textContent='Лист: '+productionSheetName+'. Укажите склад-отправитель и получателей, затем сформируйте черновики перемещений.';
+ container.innerHTML=options.map(o=>
+  '<div class="orgrow"><span><b>'+productionText(o.name)+'</b>'+
+  (o.point==='ЭТМ'?'<small>Объединяется в один документ ЭТМ</small>':'')+
+  '<small>Столбец '+(o.col+1)+'</small></span>'+
+  '<select data-col="'+o.col+'" aria-label="Роль '+productionText(o.name)+'">'+
+  '<option value="point" selected>Включить в перемещения</option>'+
+  '<option value="ignore">Не учитывать</option></select></div>'
+ ).join('');
+ productionDocuments=[];
+ const result=document.getElementById('prodresult');
+ if(result){result.innerHTML='';result.hidden=true}
+ document.getElementById('prodstatus').textContent=
+  'Лист: '+productionSheetName+'. Отправители заданы маршрутом: ПК→БК (выпечка), ПК→ПР (выпечка ПР), БК→точки. БР исключена.'+
+  (unknown.length?' Есть нераспознанные колонки: '+unknown.map(x=>x.name).join(', ')+'.':'');
 }
 function productionQuantity(v){
  if(typeof v==='number')return Number.isFinite(v)?v:null;
@@ -160,86 +201,130 @@ function productionBuild(){
  const result=document.getElementById('prodresult');
  if(result){result.hidden=true;result.innerHTML=''}
  try{
-  if(!productionBook||!productionSheetName||!window.productionContext)throw Error('Сначала получите план Excel и выберите дату');
-  const kitchen=document.getElementById('prodkitchen').value.trim();
-  if(!kitchen)throw Error('Укажите склад-отправитель');
+  const context=window.productionContext;
+  if(!productionBook||!productionSheetName||!context)
+   throw Error('Сначала получите отдельный план Excel и выберите дату');
   const selectors=[...document.querySelectorAll('#prodrecipients select')];
-  const roles=selectors.filter(x=>x.value==='point').map(x=>{
+  const columns=selectors.filter(x=>x.value==='point').map(x=>{
     const col=Number(x.dataset.col);
-    return {col,name:String(window.productionContext.heads[col]??'').trim()};
+    const name=String(context.heads[col]??'').trim();
+    return {col,name,point:productionPoint(name)};
   });
-  if(!roles.length)throw Error('Выберите хотя бы один столбец «Получатель перемещения»');
-  const badRole=roles.find(x=>!x.name||productionSkip.test(x.name)||productionNorm(x.name)==='iiko');
-  if(badRole)throw Error('Недопустимый получатель: '+badRole.name);
-  const same=roles.find(x=>productionNorm(x.name)===productionNorm(kitchen));
-  if(same)throw Error('Склад-отправитель не может совпадать с получателем «'+same.name+'»');
-  const transfers=new Map(roles.map(r=>[r.name,new Map()]));
-  const warnings=[],withoutCode=[],invalidValues=[];
-  let accepted=0;
-  for(let i=window.productionContext.header+1;i<productionRows.length;i++){
-   const row=productionRows[i]||[];
-   const name=String(row[1]??'').trim(),code=String(row[0]??'').trim();
-   if(!name||productionGroups.test(code)||productionGroups.test(name))continue;
-   const entries=[];
-   for(const recipient of roles){
-    const raw=row[recipient.col];
-    const quantity=productionQuantity(raw);
-    if(raw!==null&&raw!==undefined&&String(raw).trim()!==''&&quantity===null)
-      invalidValues.push('Строка '+(i+1)+', '+recipient.name+': некорректное количество «'+String(raw).slice(0,35)+'»');
-    if(quantity!==null&&quantity>0)entries.push({...recipient,quantity});
-   }
-   if(!entries.length)continue;
-   if(!/^\d+$/.test(code)){
-    withoutCode.push('Строка '+(i+1)+': '+name+' — нет числового кода');
-    continue;
-   }
-   const weight=String(row[2]??'').trim();
-   const key=code+'|'+name+'|'+weight;
-   for(const recipient of entries){
-    const entriesForTarget=transfers.get(recipient.name);
-    const existing=entriesForTarget.get(key);
-    if(existing){
-      warnings.push('Повтор кода/блюда '+code+' — '+name+', получатель '+recipient.name+
-        ' (строка '+(i+1)+'). Количества сложены.');
-      existing.quantity+=recipient.quantity;
-    }else{
-      entriesForTarget.set(key,{code,name,weight,quantity:recipient.quantity,sourceRow:i+1});
-    }
-    accepted++;
-   }
+  if(!columns.length)throw Error('Выберите хотя бы одну колонку точки');
+  if(columns.some(x=>!x.point||x.point==='Бухара раздача'))
+   throw Error('БР не участвует в перемещениях; проверьте выбранные колонки');
+  const warnings=[],missingCodes=[],invalidValues=[];
+  if(context.unknown.length)
+   warnings.push('Неизвестные колонки не обрабатываются: '+
+     context.unknown.map(x=>x.name).join(', '));
+  const routes=new Map(),totals=new Map();
+  function add(from,to,entry,amount){
+   if(!Number.isFinite(amount)||amount<=0)return;
+   if(from===to)throw Error('Внутреннее перемещение на тот же склад: '+from);
+   const routeKey=from+' → '+to;
+   if(!routes.has(routeKey)){routes.set(routeKey,new Map());totals.set(routeKey,{from,to})}
+   const items=routes.get(routeKey);
+   // For transfer drafts the identity is by name + weight, not only the
+   // plan's often-reused or empty numeric code. Mapping to iiko is a later step.
+   const key=productionNorm(entry.name)+'|'+productionNorm(entry.weight);
+   const prior=items.get(key);
+   if(prior){
+    prior.quantity+=amount;
+    prior.sourceRows.push(entry.sourceRow);
+   }else items.set(key,{code:entry.code,name:entry.name,weight:entry.weight,
+      quantity:amount,sourceRow:entry.sourceRow,sourceRows:[entry.sourceRow]});
   }
-  productionDocuments=[...transfers.entries()]
-    .filter(([,items])=>items.size>0)
-    .map(([target,items])=>({
-      type:'transfer',date:productionSheetName,source:kitchen,target,items:[...items.values()],
-      status:'DRAFT',posted:false
-    }));
-  if(!productionDocuments.length)throw Error('Нет положительных количеств для выбранных получателей');
+  let inputLines=0,excludedBR=0,etmDay=0,etmNight=0;
+  for(let i=context.header+1;i<context.pastry.end;i++){
+   const row=productionRows[i]||[];
+   const name=String(row[1]??'').trim();
+   if(!name||productionNorm(name)==='наименование'||productionGroups.test(name))continue;
+   const marker=productionNorm(row[0]);
+   if(marker==='выпечка'||productionGroups.test(marker)||marker==='меню'||marker==='№')continue;
+   const isPastry=i>context.pastry.start;
+   const entry={code:String(row[0]??'').trim(),name,
+      weight:String(row[2]??'').trim(),sourceRow:i+1};
+   let quantities=new Map();
+   for(const target of columns){
+     const raw=row[target.col],count=productionQuantity(raw);
+     if(raw!==null&&raw!==undefined&&String(raw).trim()!==''&&count===null){
+       invalidValues.push('Строка '+(i+1)+': '+target.name+
+         ' — нечисловое количество «'+String(raw).slice(0,45)+'»');
+     }
+     if(count!==null&&count>0){
+       quantities.set(target.point,(quantities.get(target.point)||0)+count);
+       if(target.point==='ЭТМ'){
+         if(/ночь/i.test(target.name))etmNight+=count;
+         else etmDay+=count;
+       }
+     }
+   }
+   // BR must never enter transfer documents, even when its own column has values.
+   const brCol=context.heads.findIndex(x=>productionPoint(x)==='Бухара раздача');
+   const brQuantity=brCol>=0?productionQuantity(row[brCol]):null;
+   if(brQuantity>0)excludedBR+=brQuantity;
+   if(!quantities.size)continue;
+   if(!/^\d+$/.test(entry.code))
+     missingCodes.push('Строка '+entry.sourceRow+': «'+entry.name+
+       '» — нет числового кода (оставлено в черновике для сопоставления)');
+   let forBukhara=0;
+   for(const [point,count] of quantities){
+     if(point==='Бухара раздача')continue;
+     if(isPastry&&point==='Правда раздача')add('Правда кухня','Правда раздача',entry,count);
+     else {
+       add('Бухара кухня',point,entry,count);
+       if(isPastry)forBukhara+=count;
+     }
+     inputLines++;
+   }
+   // Only pastry actually destined for other points enters the PK→BK leg;
+   // excluding PR (direct PK→PR) and BR (no transfer).
+   if(isPastry&&forBukhara>0)add('Правда кухня','Бухара кухня',entry,forBukhara);
+  }
+  if(invalidValues.length)
+    throw Error('В плане есть некорректные количества: '+invalidValues.slice(0,7).join('; ')+
+      '. Исправьте файл, чтобы не формировать неправильные перемещения.');
+  // The PK→BK document precedes all BK-origin transfers.
+  const ordered=[...routes.entries()].sort(([ak],[bk])=>
+    (ak==='Правда кухня → Бухара кухня'?-2:ak==='Правда кухня → Правда раздача'?-1:0)-
+    (bk==='Правда кухня → Бухара кухня'?-2:bk==='Правда кухня → Правда раздача'?-1:0));
+  productionDocuments=ordered.map(([route,items])=>{
+    const {from,to}=totals.get(route);
+    return {type:'transfer',date:productionSheetName,source:from,target:to,
+      items:[...items.values()],status:'DRAFT',posted:false};
+  });
+  if(!productionDocuments.length)
+    throw Error('Нет положительных количеств для выбранных точек');
   const escaped=productionText;
-  const warningsAll=[...warnings,...withoutCode,...invalidValues];
   const cards=productionDocuments.map(doc=>{
-    const total=doc.items.reduce((n,item)=>n+item.quantity,0);
-    return '<details><summary><b>'+escaped(doc.source)+' → '+escaped(doc.target)+'</b> · '+
-      doc.items.length+' поз. · '+total+' шт.</summary><div class="tablewrap"><table class="nomtable">'+
-      '<thead><tr><th>Код</th><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+
-      doc.items.map(item=>'<tr><td>'+escaped(item.code)+'</td><td>'+escaped(item.name)+
-       '</td><td>'+item.quantity+'</td></tr>').join('')+
+    const total=doc.items.reduce((sum,item)=>sum+item.quantity,0);
+    return '<details><summary><b>'+escaped(doc.source)+' → '+escaped(doc.target)+
+      '</b> · '+doc.items.length+' поз. · '+total+' шт.</summary>'+
+      '<div class="tablewrap"><table class="nomtable"><thead><tr>'+
+      '<th>Код</th><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+
+      doc.items.map(item=>'<tr><td>'+escaped(item.code||'—')+'</td>'+
+        '<td>'+escaped(item.name)+'</td><td>'+item.quantity+'</td></tr>').join('')+
       '</tbody></table></div></details>';
   }).join('');
   result.innerHTML='<h3>Черновики перемещений · '+escaped(productionSheetName)+'</h3>'+
-    '<p>Склад-отправитель: <b>'+escaped(kitchen)+'</b>. Документов: <b>'+
-    productionDocuments.length+'</b>. Строк: <b>'+accepted+'</b>.</p>'+
-    (warningsAll.length?
-     '<p style="color:#9d4b17"><b>Проверить ('+warningsAll.length+'):</b> '+
-       warningsAll.slice(0,40).map(escaped).join('; ')+'</p>':
-     '<p>Строк без числового кода, повторов и некорректных количеств не обнаружено.</p>')+
+    '<p>Документов: <b>'+productionDocuments.length+'</b>. Порядок: '+
+    '<b>ПК→БК</b> (выпечка для остальных точек), <b>ПК→ПР</b> (выпечка ПР), '+
+    '<b>БК→точки</b> (остальное).</p>'+
+    '<p>ЭТМ день: <b>'+etmDay+'</b>; ЭТМ ночь: <b>'+etmNight+
+      '</b>. Объединены в один склад ЭТМ. БР: <b>'+excludedBR+
+      '</b> единиц исключено из перемещений.</p>'+
+    (warnings.length||missingCodes.length?
+     '<p style="color:#9d4b17"><b>Проверить:</b> '+
+       [...warnings,...missingCodes].slice(0,40).map(escaped).join('; ')+'</p>':
+     '<p>Нераспознанных колонок и строк без кода среди перемещений не обнаружено.</p>')+
     cards+
-    '<p class="muted">Черновики для проверки: склады обозначены названиями из плана, номенклатура ещё не сопоставлена с iiko. В iiko ничего не создаётся и не проводится.</p>'+
+    '<p class="muted">Черновики для проверки. Для больших пирогов перевод в куски ещё не применяется к перемещениям. '+
+    'Номенклатуру и склады требуется сверить с iiko. Никакой выгрузки или проведения.</p>'+
     '<button onclick="productionExport()">Скачать черновики перемещений (JSON)</button>';
   result.hidden=false;
-  document.getElementById('prodstatus').textContent='Готово: '+
-    productionDocuments.length+' черновиков перемещений за '+productionSheetName+
-    '. Замечаний: '+warningsAll.length+'. Выгрузка в iiko не выполнялась.';
+  document.getElementById('prodstatus').textContent=
+    'Готово: '+productionDocuments.length+' черновиков по новым маршрутам за '+
+    productionSheetName+'. В iiko ничего не выгружено.';
  }catch(e){
   productionDocuments=[];
   if(result){result.innerHTML='';result.hidden=true}
