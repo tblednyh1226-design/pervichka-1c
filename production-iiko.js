@@ -51,9 +51,19 @@ function productionLoadIndependentBook(bytes,name){
  const chosen=preferred>=0&&productionSheetISO(meta.SheetNames[preferred],productionMoscowToday())?
    preferred:datedSheets.length?datedSheets[datedSheets.length-1].i:meta.SheetNames.length-1;
  select.value=String(chosen);
- productionSelectSheet();
+ let parsed=true,error='';
+ try{productionSelectSheet()}catch(e){
+   parsed=false;error=String(e.message||e);
+   productionRows=[];productionDocuments=[];window.productionContext=null;
+   const box=document.getElementById('prodrecipients');if(box)box.innerHTML='';
+   const result=document.getElementById('prodresult');
+   if(result){result.hidden=true;result.innerHTML=''}
+ }
  const status=document.getElementById('prodstatus');
- if(status)status.textContent='Отдельный план перемещений получен: '+name+
+ if(status&&!parsed)status.textContent='Excel с MAIN успешно получен: '+name+
+   '. Выбранный лист «'+productionSheetName+
+   '» не подошёл: '+error+'. Выберите другой день без повторного запроса.';
+ else if(status)status.textContent='Отдельный план перемещений получен: '+name+
   '. Лист: '+productionSheetName+'. '+
    (window.productionContext?.pastryColumns?.needsReview?
      'Проверьте колонки выпечки в шаге 2.':'Колонки выпечки определены.')+
@@ -72,26 +82,25 @@ async function productionOpen(){
  }
 }
 async function productionMainDownload(url,jobId){
- if(!url||!jobId)throw Error('MAIN не выдал ссылку и номер задания для нового Excel');
- let response;
- if(planGuestPreferredRoute!=='relay'){
-  const controller=new AbortController();
-  const timeoutId=setTimeout(()=>controller.abort(),15000);
-  try{
-   response=await fetch(url,{cache:'no-store',signal:controller.signal});
-   if(!response.ok)throw Error('HTTP '+response.status);
-  }catch(e){
-   planGuestPreferredRoute='relay';
-  }finally{clearTimeout(timeoutId)}
- }
- if(!response){
-  const status=document.getElementById('prodstatus');
-  if(status)status.textContent='Основное хранилище недоступно. Скачиваю новый план через резервный сервер…';
-  response=await planGuestTransport('relay','download',{job_id:jobId},false,true);
- }
- const bytes=await response.arrayBuffer();
- if(!bytes.byteLength)throw Error('Получен пустой Excel');
- return bytes;
+ return planGuestDownloadExcel(url,jobId,message=>{
+   const el=document.getElementById('prodstatus');
+   if(el)el.textContent=message;
+ });
+}
+function productionOpenMainConnection(){
+ if(typeof productionSwitchTab==='function')productionSwitchTab('cooking');
+ const el=document.getElementById('planBridge');
+ if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
+}
+async function productionMainConnectionStatus(){
+ const el=document.getElementById('prodMainConnection');
+ if(!el)return;
+ try{
+   const r=await planGuestCheckConnection(false);
+   el.textContent=r.online?'MAIN подключён и на связи. Можно получать файлы.':
+     !r.last?'Этот браузер сохранён под неактивным MAIN. Подключите действующий код на вкладке «Акт приготовления».':
+     'MAIN по сохранённому коду сейчас не отвечает. Проверьте агент MAIN либо обновите код подключения.';
+ }catch(e){el.textContent=String(e.message||e);}
 }
 async function productionMainRequest(){
  if(productionMainBusy)return;
@@ -106,8 +115,10 @@ async function productionMainRequest(){
  const latestButton=document.getElementById('prodLatestMainBtn');
  if(button)button.disabled=true;
  if(latestButton)latestButton.disabled=true;
- productionClearSource('Создаю НОВОЕ задание MAIN для перемещений. Утренний файл и акты не изменяются…');
+ const current=document.getElementById('prodstatus');
+ if(current)current.textContent='Проверяю MAIN и создаю новое задание. Уже открытый Excel сохраняется…';
  try{
+  await planGuestCheckConnection(true);
   const job=await planGuestFetch('request');
   if(!job?.job_id)throw Error('MAIN не вернул номер нового задания');
   for(let attempt=0;attempt<35;attempt++){
@@ -128,7 +139,9 @@ async function productionMainRequest(){
   }
   throw Error('MAIN ещё не подготовил файл. Задание осталось в очереди. Не создавайте повторное без проверки.');
  }catch(e){
-  productionClearSource('Не удалось получить отдельный план для перемещений: '+(e.message||e));
+  const status=document.getElementById('prodstatus');
+  if(status)status.textContent='Не удалось получить новый Excel: '+String(e.message||e)+'. Уже открытый план сохранён.';
+  void productionMainConnectionStatus();
  }finally{
   productionMainBusy=false;
   if(button)button.disabled=false;
@@ -154,8 +167,12 @@ async function productionMainLoadLatest(){
  if(status)status.textContent='Ищу последний готовый Excel на сервере. Новое задание MAIN не создаётся…';
  try{
    const latest=await planGuestFetch('latest');
-   if(!latest?.available||!latest.download_url||!latest.job_id)
-     throw Error('На сервере нет последнего готового Excel. Нажмите «Получить новый файл с MAIN».');
+   if(!latest?.available||!latest.download_url||!latest.job_id){
+     const connection=await planGuestCheckConnection(false);
+     throw Error(!connection.last?
+       'Этот браузер привязан к неактивной регистрации MAIN без файлов. Во вкладке «Акт приготовления» подключите действующий код MAIN.':
+       'У подключённого MAIN нет готового Excel. Проверьте, что используется код действующего MAIN.');
+   }
    const when=latest.finished_at?new Date(latest.finished_at)
      .toLocaleString('ru-RU',{timeZone:'Europe/Moscow',hour12:false}):'время неизвестно';
    if(status)status.textContent='Нашёл готовый Excel от '+when+
@@ -167,6 +184,7 @@ async function productionMainLoadLatest(){
  }catch(e){
    if(status)status.textContent='Не удалось открыть последний готовый Excel: '+
      String(e.message||e)+'. Новый запрос MAIN не создавался.';
+   void productionMainConnectionStatus();
  }finally{
    productionMainBusy=false;
    buttons.forEach(btn=>btn.disabled=false);
