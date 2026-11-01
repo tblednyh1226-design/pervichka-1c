@@ -287,9 +287,10 @@ function planBridgeDisconnect(){
 }
 async function planBridgeDeviceStatus() {
  const el=document.getElementById('planBridgeDevice');
+ if(el)el.textContent='Проверяю MAIN через основной и резервный серверы (ожидание до 45 секунд)…';
  try{
    const result=await planGuestCheckConnection(false);
-   const message=result.online?'MAIN на связи, файл можно получить.':
+   const message=result.online?'MAIN на связи через '+(planGuestPreferredRoute==='relay'?'резервный':'основной')+' сервер. Файл можно получить.':
      !result.last?'Это подключение MAIN ни разу не выходило на связь. Возможно, сохранён старый код. Введите действующий код MAIN и переподключитесь.':
      'MAIN по сохранённому коду сейчас не отвечает. Если агент MAIN работает, обновите код подключения.';
    if(el)el.textContent=message;
@@ -363,7 +364,7 @@ async function planBridgeLoadLatest(){
   const preview=document.getElementById('planBridgePreview');
   if(preview)preview.textContent='';
   try{
-    planBridgeStatus('Ищу последний готовый файл на сервере. Новый запрос к MAIN не создаю…');
+    planBridgeStatus('Проверяю основной и резервный серверы. Ищу последний готовый Excel без нового задания…');
     const latest=await planBridgeCall('latest');
     if(!latest.available){
       const connected=await planGuestCheckConnection(false);
