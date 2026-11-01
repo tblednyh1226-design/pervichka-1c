@@ -85,8 +85,8 @@ function productionSelectSheet(){
 }
 function productionQuantity(v){
  if(typeof v==='number')return Number.isFinite(v)?v:null;
- const raw=String(v??'').trim().replace(/\\s/g,'').replace(',','.');
- if(!raw||!/^\\d+(?:\\.\\d+)?$/.test(raw))return null;
+ const raw=String(v??'').trim().replace(/\s/g,'').replace(',','.');
+ if(!raw||!/^\d+(?:\.\d+)?$/.test(raw))return null;
  const n=Number(raw);return Number.isFinite(n)?n:null;
 }
 function productionBuild(){
@@ -123,7 +123,7 @@ function productionBuild(){
     if(quantity!==null&&quantity>0)entries.push({...recipient,quantity});
    }
    if(!entries.length)continue;
-   if(!/^\\d+$/.test(code)){
+   if(!/^\d+$/.test(code)){
     withoutCode.push('Строка '+(i+1)+': '+name+' — нет числового кода');
     continue;
    }
