@@ -204,18 +204,18 @@ function productionPoint(name){
  if(/^(мед экспресс|медэкспресс)$/.test(n))return 'Мед экспресс';
  return null;
 }
+// Use exactly the cooking-act boundaries for compotes and pastry.
+// All "Допы" rows in between are outside every production document.
 function productionFindPastry(rows,start){
- let first=-1,last=rows.length;
- for(let r=start;r<rows.length;r++){
-  const marker=productionNorm(rows[r]?.[0]||rows[r]?.[1]||'');
-  if(first<0){
-   if(marker==='выпечка')first=r;
-  }else if(/^(завтрак|завтраки|комплексн|заказ|питание сотрудников|бизнес-ланч)/.test(marker)){
-   last=r;break;
-  }
- }
- if(first<0)throw Error('На листе нет блока «Выпечка». Проверьте выбранную дату и структуру плана.');
- return {start:first,end:last};
+ if(typeof morningFindSections!=='function')
+   throw Error('Не загружен общий модуль определения разделов производства.');
+ const sections=morningFindSections(rows,{row:start-1,nameCol:1});
+ if(sections.compoteLast<0)
+   throw Error('Не найдена последняя строка компота. Чтобы не включить «допы» в перемещения, формирование остановлено. Проверьте лист Excel.');
+ if(sections.compoteLast>=sections.pastryStart)
+   throw Error('Неверные границы компотов и выпечки. Перемещения не формируются.');
+ return {start:sections.pastryStart,end:sections.nextAfterPastry,
+   compoteLast:sections.compoteLast,extrasStart:sections.extrasStart};
 }
 function productionPastryRole(v){
  const n=productionNorm(v).replace(/[^a-zа-я0-9]+/gi,' ').trim().replace(/\s+/g,' ');
@@ -415,7 +415,7 @@ function productionSelectSheet(){
  const result=document.getElementById('prodresult');
  if(result){result.innerHTML='';result.hidden=true}
  document.getElementById('prodstatus').textContent=
-  'Лист: '+productionSheetName+'. '+
+  'Лист: '+productionSheetName+'. Допы между компотами и выпечкой исключены. '+
   (pastryColumns.needsReview?'Проверьте и подтвердите колонки выпечки ниже. Пока документы заблокированы.':
   'Маршруты: ПК→БК (вся выпечка кроме ПР), БК→БР (только выпечка), БК→остальные точки. ПК→ПР не создаётся.')+
   (unknown.length?' Есть нераспознанные колонки: '+unknown.map(x=>x.name).join(', ')+'.':'');
@@ -493,6 +493,9 @@ function productionBuild(){
   }
   let inputLines=0,excludedBRRegular=0,brPastryMoved=0,excludedPRPastry=0,etmDay=0,etmNight=0;
   for(let i=context.header+1;i<context.pastry.end;i++){
+   // Ignore every row after compotes and before the pastry heading.
+   // None of these extras may enter quantity checks or iiko mappings.
+   if(i>context.pastry.compoteLast&&i<context.pastry.start)continue;
    const row=productionRows[i]||[];
    const name=String(row[1]??'').trim();
    if(!name||productionNorm(name)==='наименование'||productionGroups.test(name))continue;
