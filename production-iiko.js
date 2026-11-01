@@ -304,6 +304,28 @@ function productionSelectSheet(){
  productionRenderPastryReview();
  if(typeof transferRowDate==='function')transferRowDate();
 }
+function productionPastryReceiverColumn(target,context){
+ const cols=context.pastryColumns;
+ if(target.point==='Правда раздача')return cols.prCol;
+ if(target.point==='Бухара раздача')return cols.brCol;
+ if(cols.headerRow===context.header)return target.col;
+ const heading=productionRows[cols.headerRow]||[];
+ const exact=heading.map((v,col)=>({label:productionNorm(v),col}))
+   .filter(x=>x.label&&x.label===productionNorm(target.name));
+ if(exact.length===1)return exact[0].col;
+ const aliases=heading.map((v,col)=>({point:productionPoint(v),col}))
+   .filter(x=>x.point===target.point);
+ if(aliases.length===1)return aliases[0].col;
+ const mainPR=context.heads.findIndex(x=>productionPoint(x)==='Правда раздача');
+ const mainBR=context.heads.findIndex(x=>productionPoint(x)==='Бухара раздача');
+ // Only reuse the main column when both checked anchors are in the same
+ // positions and the pastry heading does not label that column differently.
+ if(mainPR===cols.prCol&&mainBR===cols.brCol&&
+   (!heading[target.col]||productionPoint(heading[target.col])===target.point))
+   return target.col;
+ throw Error('В блоке выпечки не определена колонка точки «'+target.name+
+   '». Проверьте отдельную строку заголовков в Excel.');
+}
 function productionQuantity(v){
  if(typeof v==='number')return Number.isFinite(v)?v:null;
  const raw=String(v??'').trim().replace(/\s/g,'').replace(',','.');
@@ -363,7 +385,8 @@ function productionBuild(){
       weight:String(row[2]??'').trim(),sourceRow:i+1};
    let quantities=new Map();
    for(const target of columns){
-     const raw=row[target.col],count=productionQuantity(raw);
+     const targetCol=isPastry?productionPastryReceiverColumn(target,context):target.col;
+     const raw=row[targetCol],count=productionQuantity(raw);
      if(raw!==null&&raw!==undefined&&String(raw).trim()!==''&&count===null){
        invalidValues.push('Строка '+(i+1)+': '+target.name+
          ' — нечисловое количество «'+String(raw).slice(0,45)+'»');
