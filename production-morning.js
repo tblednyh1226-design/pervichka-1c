@@ -192,10 +192,10 @@ function morningIikoColumn(ws,rows,header){
   return selected;
 }
 function morningIsGroup(txt){
-  return /^(выпечка|кондитерские изделия|холодные закуски|первые блюда|вторые блюда|гарниры|напитки|компоты|десерты|салаты|блюда для завтраков|завтраки|завтрак|дополнительный ассортимент|хлеб|комплексные обеды|комплексный обед|прочее)(\s*[:.]?)$/i.test(morningNorm(txt));
+  return /^(выпечка|кондитерские изделия|холодные закуски|первые блюда|вторые блюда|гарниры|напитки|компоты|десерты|салаты|блюда для завтраков|завтраки|завтрак|допы|дополнительный ассортимент|дополнительные товары|хлеб|комплексные обеды|комплексный обед|прочее)(\s*[:.]?)$/i.test(morningNorm(txt));
 }
 function morningFindSections(rows,header){
-  let pastryStart=-1,compoteLast=-1,nextAfterPastry=rows.length;
+  let pastryStart=-1,compoteLast=-1,extrasStart=-1,nextAfterPastry=rows.length;
   for(let i=header.row+1;i<rows.length;i++){
     const row=rows[i]||[];
     const n=morningNorm(row[header.nameCol]);
@@ -204,14 +204,19 @@ function morningFindSections(rows,header){
     const isPastry=text.some(t=>/^(выпечка|кондитерская выпечка|булочные изделия|хлебобулочные изделия)\s*:?\s*$/.test(t));
     if(isPastry&&pastryStart<0){pastryStart=i;continue}
     if(pastryStart<0){
-      if(text.some(t=>/^компот(?:ы|\s|$|[:.])/.test(t)))compoteLast=i;
+      // "Допы" between compotes and pastry are not food for production or
+      // transfer documents. Once the extras section begins, never accept
+      // more compote-looking names as part of the primary kitchen list.
+      if(extrasStart<0&&text.some(t=>/^(допы|дополнительный ассортимент|дополнительные товары)(\s*[:.]?)$/.test(t)))
+        extrasStart=i;
+      if(extrasStart<0&&text.some(t=>/^компот(?:ы|\s|$|[:.])/.test(t)))compoteLast=i;
     }else if(i>pastryStart && (morningIsGroup(n)||morningIsGroup(first))){
       nextAfterPastry=i;break;
     }
   }
   if(pastryStart<0)throw Error('Не найден заголовок раздела «Выпечка». Нельзя надёжно распределить блюда на БК и ПК.');
   if(compoteLast>=pastryStart)throw Error('Компоты расположены после выпечки — проверьте структуру листа.');
-  return {pastryStart,compoteLast,nextAfterPastry};
+  return {pastryStart,compoteLast,extrasStart,nextAfterPastry};
 }
 function morningLargePieInPieces(name,weight){
   // Original production plan lists large pies as 1000гр.; it may later use "кус."
@@ -274,8 +279,10 @@ function morningAnalyze(book,date){
   const columns={iiko:chosen,candidates:[chosen]};
   const bounds=morningFindSections(rows,header);
   const warnings=[];
-  const breakfastEnd=bounds.compoteLast>=0?bounds.compoteLast+1:bounds.pastryStart;
-  if(bounds.compoteLast<0)warnings.push('В листе не распознано слово «Компот». БК ограничена началом раздела «Выпечка». Проверьте границу до передачи в iiko.');
+  // Do not include "допы" in the kitchen if the compote boundary cannot
+  // be detected. Better stop than silently send the wrong nomenclature.
+  if(bounds.compoteLast<0)throw Error('Не найдена последняя строка компота до «Допы/Выпечка». Чтобы не включить допы в документы, формирование остановлено. Проверьте лист Excel.');
+  const breakfastEnd=bounds.compoteLast+1;
   if(bounds.compoteLast>=0&&breakfastEnd<bounds.pastryStart){
     const extra=morningExtract(rows,header,chosen.col,breakfastEnd,bounds.pastryStart,[]);
     if(extra.length)warnings.push('После последней строки компота и до выпечки есть ещё '+extra.length+' строк с количеством: они не включены в БК.');
