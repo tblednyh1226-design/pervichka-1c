@@ -1,5 +1,6 @@
 ﻿param([switch]$Install,[switch]$Run,[switch]$Once,[switch]$Update)
 $ErrorActionPreference = 'Stop'
+$agentVersion = '2026.11.01-open-excel-v2'
 # Windows PowerShell 5.1: load DPAPI types explicitly before registration.
 Add-Type -AssemblyName System.Security -ErrorAction Stop
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -37,7 +38,7 @@ function Get-Secret([string]$encoded) {
 function Read-WorkbookSnapshot([string]$path) {
     Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
     $lastError = $null
-    for ($attempt = 1; $attempt -le 6; $attempt++) {
+    for ($attempt = 1; $attempt -le 8; $attempt++) {
         $source = $null
         $memory = $null
         $zipMemory = $null
@@ -46,26 +47,35 @@ function Read-WorkbookSnapshot([string]$path) {
             $sharing = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
             $source = [System.IO.FileStream]::new($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $sharing)
             $originalLength = $source.Length
+            $beforeWriteTime = (Get-Item -LiteralPath $path -ErrorAction Stop).LastWriteTimeUtc
             if ($originalLength -lt 4 -or $originalLength -gt 15000000) {
                 throw 'Размер Excel некорректен (максимум 15 МБ)'
             }
             $memory = [System.IO.MemoryStream]::new()
             $source.CopyTo($memory)
             $bytes = $memory.ToArray()
+            # Excel may replace the workbook while saving. Reject a torn snapshot.
+            $afterInfo = Get-Item -LiteralPath $path -ErrorAction Stop
+            if ($source.Length -ne $originalLength -or
+                $afterInfo.Length -ne $originalLength -or
+                $afterInfo.LastWriteTimeUtc -ne $beforeWriteTime) {
+                throw 'Excel изменился во время чтения — повторяю снимок'
+            }
             if ($bytes.Length -ne $originalLength -or $bytes[0] -ne 80 -or $bytes[1] -ne 75) {
                 throw 'Excel изменился в момент чтения'
             }
             $zipMemory = [System.IO.MemoryStream]::new($bytes)
             $zip = [System.IO.Compression.ZipArchive]::new($zipMemory,[System.IO.Compression.ZipArchiveMode]::Read,$false)
-            if (-not $zip.GetEntry('[Content_Types].xml')) {
-                throw 'Excel временно недоступен в формате XLSX'
+            if (-not $zip.GetEntry('[Content_Types].xml') -or
+                -not $zip.GetEntry('xl/workbook.xml')) {
+                throw 'Файл Excel ещё сохраняется или XLSX неполный'
             }
             # Important: do not enumerate the byte array in PowerShell pipeline.
             return ,$bytes
         } catch {
             $lastError = $_.Exception.Message
-            if ($attempt -lt 6) {
-                Write-Log ('Excel занят или сохраняется; повторная попытка '+$attempt+'/6')
+            if ($attempt -lt 8) {
+                Write-Log ('Excel занят или сохраняется; повторная попытка '+$attempt+'/8')
                 Start-Sleep -Seconds 2
             }
         } finally {
@@ -148,7 +158,7 @@ function Update-Main {
         '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
         '-File',('"'+$scriptPath+'"'),'-Run'
     ) -WindowStyle Hidden
-    Write-Host 'Модуль MAIN обновлён и снова запущен.'
+    Write-Host ('Модуль MAIN обновлён до '+$agentVersion+' и снова запущен.')
     Write-Host 'Прежний код подключения сохранён. В браузере ничего менять не нужно.'
 }
 function Install-Main {
@@ -215,12 +225,13 @@ try {
     if (-not $mutex.WaitOne(0,$false)) { if ($Once) { Write-Host 'Фоновая программа MAIN уже работает.' }; exit 0 }
     try {
         if ($Once) {
+            Write-Log ('Версия MAIN: '+$agentVersion)
             Write-Log ('Источник: '+$cfg.source_file)
             if (Test-Path -LiteralPath $cfg.source_file -PathType Leaf) { Write-Log 'Excel доступен.' }
             else { Write-Log 'Excel недоступен. Проверьте сетевой путь.' }
             Run-One $cfg
         } else {
-            Write-Log 'Фоновый модуль MAIN запущен'
+            Write-Log ('Фоновый модуль MAIN запущен; версия '+$agentVersion+'; чтение открытого Excel включено')
             while ($true) {
                 try { Run-One $cfg; Start-Sleep -Seconds 5 }
                 catch { Write-Log ('Ошибка связи: '+$_.Exception.Message); Start-Sleep -Seconds 15 }
