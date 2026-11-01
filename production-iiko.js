@@ -146,6 +146,22 @@ function productionFindPastry(rows,start){
  if(first<0)throw Error('На листе нет блока «Выпечка». Проверьте выбранную дату и структуру плана.');
  return {start:first,end:last};
 }
+function productionPastryColumns(rows,pastryStart){
+ // The pastry section has its own header row. "Всего" includes BR and
+ // external customers, so PK→BK must use it rather than summing only outlets.
+ for(let i=pastryStart-1;i>=Math.max(0,pastryStart-7);i--){
+  const header=rows[i]||[];
+  if(productionNorm(header[1])!=='наименование')continue;
+  const totals=header.map((value,col)=>({value:productionNorm(value),col}))
+    .filter(x=>x.value==='всего');
+  const pr=header.map((value,col)=>({value:productionPoint(value),col}))
+    .filter(x=>x.value==='Правда раздача');
+  if(totals.length!==1||pr.length!==1)
+   throw Error('В блоке выпечки должна быть ровно одна колонка «Всего» и одна «Раздача Правды».');
+  return {totalCol:totals[0].col,prCol:pr[0].col,headerRow:i};
+ }
+ throw Error('Не найдена отдельная строка заголовков выпечки с колонками «Всего» и «Раздача Правды».');
+}
 function productionSelectSheet(){
  if(!productionBook)return;
  const i=Number(document.getElementById('prodsheet').value);
@@ -168,12 +184,13 @@ function productionSelectSheet(){
  if(header<0)throw Error('Не найдена основная строка с заголовками точек');
  const heads=productionRows[header];
  const pastry=productionFindPastry(productionRows,header+1);
+ const pastryColumns=productionPastryColumns(productionRows,pastry.start);
  const options=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
    .filter(x=>x.name&&x.col>=4&&x.point&&x.point!=='Бухара раздача');
  const unknown=heads.map((v,col)=>({name:String(v??'').trim(),col}))
    .filter(x=>x.name&&x.col>=4&&!productionSkip.test(x.name)&&
       !productionPoint(x.name));
- window.productionContext={header,heads,options,pastry,unknown};
+ window.productionContext={header,heads,options,pastry,pastryColumns,unknown};
  const container=document.getElementById('prodrecipients');
  container.innerHTML=options.map(o=>
   '<div class="orgrow"><span><b>'+productionText(o.name)+'</b>'+
@@ -234,7 +251,7 @@ function productionBuild(){
    }else items.set(key,{code:entry.code,name:entry.name,weight:entry.weight,
       quantity:amount,sourceRow:entry.sourceRow,sourceRows:[entry.sourceRow]});
   }
-  let inputLines=0,excludedBR=0,etmDay=0,etmNight=0;
+  let inputLines=0,excludedBR=0,brPastryInBK=0,excludedPRPastry=0,etmDay=0,etmNight=0;
   for(let i=context.header+1;i<context.pastry.end;i++){
    const row=productionRows[i]||[];
    const name=String(row[1]??'').trim();
@@ -263,31 +280,43 @@ function productionBuild(){
    const brCol=context.heads.findIndex(x=>productionPoint(x)==='Бухара раздача');
    const brQuantity=brCol>=0?productionQuantity(row[brCol]):null;
    if(brQuantity>0)excludedBR+=brQuantity;
-   if(!quantities.size)continue;
+   let pastryUpstream=0;
+   if(isPastry){
+     const rawTotal=row[context.pastryColumns.totalCol];
+     const rawPr=row[context.pastryColumns.prCol];
+     const total=productionQuantity(rawTotal),pr=productionQuantity(rawPr);
+     if(total===null||pr===null && String(rawPr??'').trim()!=='')
+       throw Error('Строка '+(i+1)+': нечисловое количество в «Всего» или «Раздача Правды» для выпечки');
+     const prCount=pr||0;
+     pastryUpstream=total-prCount;
+     if(pastryUpstream<0)
+       throw Error('Строка '+(i+1)+': выпечки для ПР больше, чем общее количество');
+     excludedPRPastry+=prCount;
+     const br=brCol>=0?productionQuantity(row[brCol]):null;
+     if(br>0)brPastryInBK+=br;
+   }
+   if(!quantities.size&&!pastryUpstream)continue;
    if(!/^\d+$/.test(entry.code))
      missingCodes.push('Строка '+entry.sourceRow+': «'+entry.name+
        '» — нет числового кода (оставлено в черновике для сопоставления)');
-   let forBukhara=0;
    for(const [point,count] of quantities){
-     if(point==='Бухара раздача')continue;
-     if(isPastry&&point==='Правда раздача')add('Правда кухня','Правда раздача',entry,count);
-     else {
-       add('Бухара кухня',point,entry,count);
-       if(isPastry)forBukhara+=count;
-     }
+     if(point==='Бухара раздача'||(isPastry&&point==='Правда раздача'))
+       continue; // PR pastry stays outside ALL transfer documents.
+     add('Бухара кухня',point,entry,count);
      inputLines++;
    }
-   // Only pastry actually destined for other points enters the PK→BK leg;
-   // excluding PR (direct PK→PR) and BR (no transfer).
-   if(isPastry&&forBukhara>0)add('Правда кухня','Бухара кухня',entry,forBukhara);
+   // Every saved pastry unit except PR enters BK: BR and external customers
+   // also count, although no BK→BR or BK→customer documents are created.
+   if(isPastry&&pastryUpstream>0)
+     add('Правда кухня','Бухара кухня',entry,pastryUpstream);
   }
   if(invalidValues.length)
     throw Error('В плане есть некорректные количества: '+invalidValues.slice(0,7).join('; ')+
       '. Исправьте файл, чтобы не формировать неправильные перемещения.');
   // The PK→BK document precedes all BK-origin transfers.
   const ordered=[...routes.entries()].sort(([ak],[bk])=>
-    (ak==='Правда кухня → Бухара кухня'?-2:ak==='Правда кухня → Правда раздача'?-1:0)-
-    (bk==='Правда кухня → Бухара кухня'?-2:bk==='Правда кухня → Правда раздача'?-1:0));
+    (ak==='Правда кухня → Бухара кухня'?-1:0)-
+    (bk==='Правда кухня → Бухара кухня'?-1:0));
   productionDocuments=ordered.map(([route,items])=>{
     const {from,to}=totals.get(route);
     return {type:'transfer',date:productionSheetName,source:from,target:to,
@@ -308,17 +337,19 @@ function productionBuild(){
   }).join('');
   result.innerHTML='<h3>Черновики перемещений · '+escaped(productionSheetName)+'</h3>'+
     '<p>Документов: <b>'+productionDocuments.length+'</b>. Порядок: '+
-    '<b>ПК→БК</b> (выпечка для остальных точек), <b>ПК→ПР</b> (выпечка ПР), '+
-    '<b>БК→точки</b> (остальное).</p>'+
+    '<b>ПК→БК</b> (вся выпечка минус ПР), затем <b>БК→точки</b>. '+
+    'ПК→ПР не формируется.</p>'+
     '<p>ЭТМ день: <b>'+etmDay+'</b>; ЭТМ ночь: <b>'+etmNight+
       '</b>. Объединены в один склад ЭТМ. БР: <b>'+excludedBR+
-      '</b> единиц исключено из перемещений.</p>'+
+      '</b> единиц без перемещения БК→БР, из них выпечка <b>'+brPastryInBK+
+      '</b> включена в ПК→БК. Выпечка ПР <b>'+excludedPRPastry+
+      '</b> единиц полностью исключена из перемещений.</p>'+
     (warnings.length||missingCodes.length?
      '<p style="color:#9d4b17"><b>Проверить:</b> '+
        [...warnings,...missingCodes].slice(0,40).map(escaped).join('; ')+'</p>':
      '<p>Нераспознанных колонок и строк без кода среди перемещений не обнаружено.</p>')+
     cards+
-    '<p class="muted">Черновики для проверки. Для больших пирогов перевод в куски ещё не применяется к перемещениям. '+
+    '<p class="muted">Черновики для проверки. Выпечка ПК→БК рассчитывается по колонке «Всего» минус ПР. Для больших пирогов перевод в куски ещё не применяется к перемещениям. '+
     'Номенклатуру и склады требуется сверить с iiko. Никакой выгрузки или проведения.</p>'+
     '<button onclick="productionExport()">Скачать черновики перемещений (JSON)</button>';
   result.hidden=false;
