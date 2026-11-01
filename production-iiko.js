@@ -629,6 +629,9 @@ function productionBuild(){
   if(typeof transferConnect==='function'&&typeof planGuestStored==='function'&&
      planGuestStored()?.token&&typeof transferLive!=='undefined'&&
      !transferLive.connected&&!transferLive.busy)void transferConnect();
+  else if(typeof transferReconcile==='function'&&
+     typeof transferLive!=='undefined'&&transferLive.connected&&!transferLive.busy)
+    void transferReconcile();
  }catch(e){
   productionDocuments=[];
   if(result){result.innerHTML='';result.hidden=true}
