@@ -146,23 +146,33 @@ function productionFindPastry(rows,start){
  if(first<0)throw Error('На листе нет блока «Выпечка». Проверьте выбранную дату и структуру плана.');
  return {start:first,end:last};
 }
-function productionPastryColumns(rows,pastryStart){
- // The pastry section has its own header row. "Всего" includes BR and
- // external customers, so PK→BK must use it rather than summing only outlets.
- for(let i=pastryStart-1;i>=Math.max(0,pastryStart-7);i--){
-  const header=rows[i]||[];
-  if(productionNorm(header[1])!=='наименование')continue;
-  const totals=header.map((value,col)=>({value:productionNorm(value),col}))
-    .filter(x=>x.value==='всего');
-  const pr=header.map((value,col)=>({value:productionPoint(value),col}))
-    .filter(x=>x.value==='Правда раздача');
-  const br=header.map((value,col)=>({value:productionPoint(value),col}))
-    .filter(x=>x.value==='Бухара раздача');
-  if(totals.length!==1||pr.length!==1||br.length!==1)
-   throw Error('В блоке выпечки должны быть отдельные колонки «Всего», «Раздача Правды» и «Раздача Бухара».');
-  return {totalCol:totals[0].col,prCol:pr[0].col,brCol:br[0].col,headerRow:i};
+function productionPastryRole(v){
+ const n=productionNorm(v).replace(/[^a-zа-я0-9]+/gi,' ').trim().replace(/\s+/g,' ');
+ if(/^(?:всего|итого)(?: (?:выпечка|шт|штук|порций|количество|кол во))*$/.test(n))return 'total';
+ if(productionPoint(n)==='Правда раздача'||/^(?:раздача )?правд(?:а|ы|е)?(?: раздача)?$/.test(n))return 'pr';
+ if(productionPoint(n)==='Бухара раздача'||/^(?:раздача )?бухар(?:а|ы|е)?(?: раздача)?$/.test(n))return 'br';
+ return '';
+}
+function productionPastryColumns(rows,pastryStart,mainHeader,pastryEnd){
+ const stop=Math.min(rows.length-1,pastryEnd-1,pastryStart+9);
+ const candidates=[];
+ for(let i=Math.max(0,mainHeader);i<=stop;i++){
+   const row=rows[i]||[],roles={total:[],pr:[],br:[]};
+   row.forEach((value,col)=>{const role=productionPastryRole(value);if(role)roles[role].push(col)});
+   const count=roles.total.length+roles.pr.length+roles.br.length;
+   if(count<2)continue;
+   if(!productionNorm(row[1]).includes('наименован')&&productionNorm(row[0])!=='№'&&count<3)continue;
+   candidates.push({row:i,roles,complete:roles.total.length===1&&roles.pr.length===1&&roles.br.length===1});
  }
- throw Error('Не найдена отдельная строка заголовков выпечки с колонками «Всего» и «Раздача Правды».');
+ const compare=(a,b)=>Math.abs(a.row-pastryStart)-Math.abs(b.row-pastryStart);
+ const match=candidates.filter(x=>x.complete).sort(compare)[0];
+ if(match)return {totalCol:match.roles.total[0],prCol:match.roles.pr[0],
+   brCol:match.roles.br[0],headerRow:match.row,needsReview:false};
+ const nearest=candidates.sort(compare)[0];
+ return {totalCol:nearest?.roles.total.length===1?nearest.roles.total[0]:null,
+   prCol:nearest?.roles.pr.length===1?nearest.roles.pr[0]:null,
+   brCol:nearest?.roles.br.length===1?nearest.roles.br[0]:null,
+   headerRow:nearest?.row??mainHeader,needsReview:true};
 }
 function productionSelectSheet(){
  if(!productionBook)return;
@@ -186,7 +196,7 @@ function productionSelectSheet(){
  if(header<0)throw Error('Не найдена основная строка с заголовками точек');
  const heads=productionRows[header];
  const pastry=productionFindPastry(productionRows,header+1);
- const pastryColumns=productionPastryColumns(productionRows,pastry.start);
+ const pastryColumns=productionPastryColumns(productionRows,pastry.start,header,pastry.end);
  const options=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
    .filter(x=>x.name&&x.col>=4&&x.point&&x.point!=='Бухара раздача');
  const unknown=heads.map((v,col)=>({name:String(v??'').trim(),col}))
