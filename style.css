@@ -69,3 +69,20 @@ body.guest-mode .context,body.guest-mode .headright{display:none!important}
  #productionPanelTransfers .transfer-send{width:100%}
  #productionPanelTransfers .transfer-warehouse{grid-template-columns:minmax(0,1fr)}
 }
+
+
+/* Main menu: 3 independent organisation/workflow tabs. */
+.home-tabs{display:flex;gap:6px;background:#eef2f7;border:1px solid #dfe5ed;border-radius:14px;padding:5px;margin:10px 0 22px}
+.home-tabs .home-tab{flex:1 1 0;min-width:0;background:transparent;color:#475467;border:1px solid transparent;border-radius:10px;padding:14px 12px;font-size:16px;font-weight:700;cursor:pointer;line-height:1.35}
+.home-tabs .home-tab.active{background:#fff;color:#155eef;border-color:#cdd8ec;box-shadow:0 1px 4px #1018281a}
+.home-tabs .home-tab:hover:not(.active){background:#ffffffa8}
+.home-tabs .home-tab:focus-visible{outline:3px solid #84adff;outline-offset:2px}
+.home-panel{min-width:0}
+.home-panel h2{font-size:22px;margin:4px 0 7px}
+.home-panel>.muted{margin:0 0 18px}
+.home-panel .grid{margin-top:12px}
+@media(max-width:650px){
+ .home-tabs{gap:3px;padding:3px;margin:6px 0 18px}
+ .home-tabs .home-tab{padding:12px 5px;font-size:14px;overflow-wrap:anywhere}
+ .home-panel h2{font-size:20px}
+}
