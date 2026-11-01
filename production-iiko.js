@@ -492,12 +492,20 @@ function productionBuild(){
    // For transfer drafts the identity is by name + weight, not only the
    // plan's often-reused or empty numeric code. Mapping to iiko is a later step.
    const key=productionNorm(entry.name)+'|'+productionNorm(entry.weight);
+   // A full-size pie (normally 1000 g) is transferred in the same pieces
+   // as the cooking act: one pie = eight portions. Convert exactly once
+   // while building EACH route, before totals, preview and iiko upload.
+   const conversionFactor=typeof morningLargePieInPieces==='function'&&
+     morningLargePieInPieces(entry.name,entry.weight)?8:1;
+   const finalAmount=amount*conversionFactor;
    const prior=items.get(key);
    if(prior){
-    prior.quantity+=amount;
+    prior.quantity+=finalAmount;
+    if(conversionFactor===8)prior.sourceQuantity+=amount;
     prior.sourceRows.push(entry.sourceRow);
    }else items.set(key,{code:entry.code,name:entry.name,weight:entry.weight,
-      quantity:amount,sourceRow:entry.sourceRow,sourceRows:[entry.sourceRow]});
+      quantity:finalAmount,sourceRow:entry.sourceRow,sourceRows:[entry.sourceRow],
+      ...(conversionFactor===8?{sourceQuantity:amount,conversionFactor:8,quantityUnit:'кус.'}:{})});
   }
   let inputLines=0,excludedBRRegular=0,brPastryMoved=0,excludedPRPastry=0,etmDay=0,etmNight=0;
   for(let i=context.header+1;i<context.pastry.end;i++){
@@ -597,9 +605,12 @@ function productionBuild(){
     notes.textContent='Требует проверки: '+warningsAll.slice(0,30).join('; ');
     result.appendChild(notes);
   }
+  const converted=productionDocuments.flatMap(d=>d.items).filter(x=>x.conversionFactor===8);
   document.getElementById('prodstatus').textContent=
     'Автоматически сформировано '+productionDocuments.length+' перемещений за '+productionSheetName+
-    '. Откройте документы и проверьте блюда, количества и склады до отправки в iiko.';
+    '. Крупные пироги: '+(converted.length?
+      converted.length+' строк переведено в куски (×8).':'нет позиций для пересчёта ×8.')+
+    ' Откройте документы и проверьте блюда, количества и склады до отправки в iiko.';
   // Catalogue read only. Sending iiko documents remains manual.
   if(typeof transferConnect==='function'&&typeof planGuestStored==='function'&&
      planGuestStored()?.token&&typeof transferLive!=='undefined'&&
