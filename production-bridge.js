@@ -96,6 +96,63 @@ async function planGuestFetch(action,extra={},isClaim=false){
   }
 }
 async function planBridgeCall(action,extra={}){ return planGuestFetch(action,extra); }
+// A browser can be paired to an obsolete MAIN record. Do not queue new jobs
+// until the paired MAIN has actually reported its own heartbeat.
+async function planGuestCheckConnection(requireOnline=false){
+ const {deviceId,token}=planGuestStored();
+ if(!deviceId||!/^[0-9a-f]{32}$/i.test(String(token||'')))
+   throw Error('Этот браузер не подключён к MAIN. Во вкладке «Акт приготовления» введите действующий код MAIN и нажмите «Подключить MAIN».');
+ const response=await planGuestFetch('device_status');
+ const last=response?.device?.last_seen_at||'';
+ const lastMillis=last?Date.parse(last):NaN;
+ const online=Number.isFinite(lastMillis)&&Date.now()-lastMillis<180000&&Date.now()-lastMillis>-60000;
+ if(requireOnline&&!online){
+   if(!last)throw Error('Браузер подключён к старой регистрации MAIN, которая ни разу не выходила на связь. Подключите действующий код MAIN во вкладке «Акт приготовления».');
+   throw Error('Этот MAIN сейчас не отвечает. Проверьте агент на основном компьютере. Если он работает — браузер, возможно, подключён к старому MAIN. Переподключите действующий код.');
+ }
+ return {online,last,device:response?.device||null};
+}
+// Both tabs use the same verified download mechanism: authenticated edge relay
+// first, a freshly signed direct storage URL only as fallback.
+async function planGuestDownloadExcel(url,jobId,statusCallback){
+ if(!jobId)throw Error('MAIN не указал номер задания для получения Excel.');
+ const status=typeof statusCallback==='function'?statusCallback:()=>{};
+ let relayError='';
+ try{
+   status('Скачиваю готовый Excel через защищённый канал MAIN…');
+   const response=await planGuestTransport('relay','download',{job_id:jobId},false,true);
+   const data=await response.arrayBuffer();
+   if(data.byteLength<4||new Uint8Array(data,0,2).some((v,i)=>v!==[80,75][i]))
+     throw Error('Сервер вернул не Excel (XLSX).');
+   return data;
+ }catch(e){relayError=String(e.message||e);}
+ try{
+   status('Резервный канал недоступен. Проверяю прямое скачивание из хранилища…');
+   // Refresh URL: its signature expires, especially after a long relay timeout.
+   let direct=url;
+   try{
+     const job=await planGuestFetch('status',{job_id:jobId});
+     if(job?.status==='completed'&&job.download_url)direct=job.download_url;
+   }catch(_){}
+   if(!direct)throw Error('Ссылка на файл отсутствует');
+   const u=new URL(direct);
+   if(u.protocol!=='https:'||u.hostname!=='dwdunpyzcfdwokoczenl.supabase.co'||
+      !u.pathname.includes('/storage/v1/object/sign/'))
+     throw Error('Неверный адрес Excel на сервере');
+   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
+   try{
+     const response=await fetch(u.href,{cache:'no-store',signal:controller.signal});
+     if(!response.ok)throw Error('HTTP '+response.status);
+     const data=await response.arrayBuffer();
+     if(data.byteLength<4||new Uint8Array(data,0,2).some((v,i)=>v!==[80,75][i]))
+       throw Error('Получен не файл XLSX');
+     return data;
+   }finally{clearTimeout(timeout)}
+ }catch(e){
+   throw Error('Оба канала скачивания недоступны. Резервный: '+relayError+
+     '; прямой: '+String(e.message||e)+'. Файл на MAIN сохранён, повторно создавать его не нужно.');
+ }
+}
 async function planBridgePair(){
   const el=document.getElementById('planBridgeCodeInput');
   const token=String(el?.value||'').replace(/[\s-]/g,'').toLowerCase();
@@ -128,22 +185,18 @@ function planBridgeDisconnect(){
   planBridgeStatus('Код удалён с этого устройства. Для повторного подключения нужен код с MAIN.');
 }
 async function planBridgeDeviceStatus() {
-  try {
-    if(!planGuestStored().token){const el=document.getElementById('planBridgeDevice');if(el)el.textContent='MAIN не подключён. Введите код, который покажет установщик на MAIN.';return;}
-    const r=await planBridgeCall('device_status');
-    const el=document.getElementById('planBridgeDevice');
-    if(!el)return;
-    if(!r.device) {
-      el.textContent='Компьютер MAIN ещё не подключён.';
-    }else if(r.device.last_seen_at && Date.now()-Date.parse(r.device.last_seen_at)<120000) {
-      el.textContent='MAIN подключён и на связи.';
-    } else {
-      el.textContent='MAIN зарегистрирован, но сейчас не отвечает. Проверьте, включён ли компьютер.';
-    }
-  }catch(e){
-    const el=document.getElementById('planBridgeDevice');
-    if(el)el.textContent='Не удалось проверить связь: '+(e.message||e);
-  }
+ const el=document.getElementById('planBridgeDevice');
+ try{
+   const result=await planGuestCheckConnection(false);
+   const message=result.online?'MAIN на связи, файл можно получить.':
+     !result.last?'Это подключение MAIN ни разу не выходило на связь. Возможно, сохранён старый код. Введите действующий код MAIN и переподключитесь.':
+     'MAIN по сохранённому коду сейчас не отвечает. Если агент MAIN работает, обновите код подключения.';
+   if(el)el.textContent=message;
+   return result;
+ }catch(e){
+   if(el)el.textContent='Не удалось проверить MAIN: '+String(e.message||e);
+   return null;
+ }
 }
 function planBridgePreview(arraybuffer) {
   if(typeof XLSX==='undefined')throw new Error('Модуль Excel не загружен');
@@ -178,36 +231,23 @@ function planBridgeDownload() {
   setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
 async function planBridgeImportDownload(url,label,jobId){
-  if(!url)throw Error('Сервер не предоставил адрес Excel.');
-  let response;
-  // A client may reach the backup Edge Function but not the original
-  // Storage domain. The relay revalidates the MAIN token and job ownership.
-  if(planGuestPreferredRoute!=='relay'){
-    planBridgeStatus('Скачиваю Excel с сервера…');
-    const controller=new AbortController();
-    const timeoutId=setTimeout(()=>controller.abort(),15000);
-    try{
-      response=await fetch(url,{cache:'no-store',signal:controller.signal});
-      if(!response.ok)throw Error('HTTP '+response.status);
-    }catch(e){
-      if(!jobId)throw Error('Не удалось получить файл: '+(e.message||e));
-      planGuestPreferredRoute='relay';
-    }finally{clearTimeout(timeoutId)}
-  }
-  if(!response){
-    if(!jobId)throw Error('Для резервного скачивания неизвестен номер задания');
-    planBridgeStatus('Скачиваю готовый Excel через резервный сервер…');
-    response=await planGuestTransport('relay','download',{job_id:jobId},false,true);
-  }
-  planBridgeBytes=await response.arrayBuffer();
-  if(!planBridgeBytes.byteLength)throw Error('Получен пустой Excel');
+  if(!url||!jobId)throw Error('Сервер не предоставил адрес и номер Excel.');
+  const bytes=await planGuestDownloadExcel(url,jobId,text=>planBridgeStatus(text));
+  // The downloaded file remains available even if the chosen date cannot be
+  // parsed; never confuse a sheet-selection error with a failed download.
+  planBridgeBytes=bytes;
   planBridgeFileName='ПЛАН ПРОИЗВОДСТВА.xlsx';
   const download=document.getElementById('planBridgeDownloadBtn');
   if(download)download.hidden=false;
-  planBridgeStatus('Excel получен ('+(planBridgeBytes.byteLength/1048576).toFixed(1)+' МБ). Открываю выбранный день…');
+  planBridgeStatus('Excel получен ('+(bytes.byteLength/1048576).toFixed(1)+' МБ). Открываю выбранный день…');
   await new Promise(resolve=>setTimeout(resolve,0));
-  planBridgePreview(planBridgeBytes);
-  planBridgeStatus(label+' В iiko ничего не передавалось.');
+  try{
+    planBridgePreview(bytes);
+    planBridgeStatus(label+' В iiko ничего не передавалось.');
+  }catch(e){
+    planBridgeStatus('Excel с MAIN получен и доступен для скачивания, но выбранный день не прочитан: '+
+      String(e.message||e)+'. Выберите другой лист/дату, не создавая повторного задания.',true);
+  }
 }
 async function planBridgeLoadLatest(){
   if(planBridgeBusy)return;
@@ -224,7 +264,12 @@ async function planBridgeLoadLatest(){
   try{
     planBridgeStatus('Ищу последний готовый файл на сервере. Новый запрос к MAIN не создаю…');
     const latest=await planBridgeCall('latest');
-    if(!latest.available)throw Error('На сервере пока нет готового файла от MAIN.');
+    if(!latest.available){
+      const connected=await planGuestCheckConnection(false);
+      throw Error(!connected.last?
+        'Сохранённый код относится к регистрации MAIN без файлов и без подключений. Переподключите действующий код MAIN.':
+        'У этого подключения MAIN нет готовых файлов. Если другой MAIN уже создал Excel, переподключите его действующий код.');
+    }
     const finished=latest.finished_at?new Date(latest.finished_at)
       .toLocaleString('ru-RU',{timeZone:'Europe/Moscow',hour12:false}):'время не указано';
     await planBridgeImportDownload(latest.download_url,'Открыт последний готовый файл MAIN от '+finished+' (Москва).',latest.job_id);
@@ -243,6 +288,8 @@ async function planBridgeRequest() {
   document.getElementById('planBridgeDownloadBtn').hidden=true;
   document.getElementById('planBridgePreview').textContent='';
   try {
+    planBridgeStatus('Проверяю действующее подключение MAIN…');
+    await planGuestCheckConnection(true);
     planBridgeStatus('Создаю задание на сервере (ответ до 12 секунд)…');
     const job=await planBridgeCall('request');
     planBridgeStatus('Задание создано. Жду выполнения на MAIN…');
