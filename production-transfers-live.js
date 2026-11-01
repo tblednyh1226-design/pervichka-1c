@@ -2,7 +2,7 @@
    Cooking acts, their data and their API remain untouched. */
 const TRANSFER_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-transfers';
 const transferLive={connected:false,busy:false,stores:[],catalog:[],catalogById:new Map(),catalogByName:new Map(),
- mapped:new Map(),warehouse:new Map(),sending:new Set(),locks:new Set(),receipts:new Map(),sig:''};
+ mapped:new Map(),warehouse:new Map(),sending:new Set(),locks:new Set(),receipts:new Map(),sig:'',mappingEntries:[],editKeys:new Set(),mappingQueries:new Map()};
 const transferEscape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const transferNorm=v=>String(v??'').toLowerCase().replace(/ё/g,'е').replace(/\s+/g,' ').trim();
 const transferPrefix=v=>String(v??'').split(/[（(]/,1)[0].trim();
@@ -39,15 +39,174 @@ function transferFindProduct(item,di,li){
  if(typeof iikoDraftResolveProduct!=='function')return null;
  const result=iikoDraftResolveProduct(item);
  const id=String(result.product?.id||'');
- return id?transferLive.catalogById.get(id)||null:null;
+ return id?(transferLive.catalogById.get(id)||iikoDraftState.catalogList.find(p=>p.id===id)||null):null;
 }
-function transferMatchCandidates(query){
+function transferMatchCandidates(query,allTypes=false){
  const source=typeof iikoDraftState!=='undefined'?iikoDraftState.catalogList:[];
  const score=typeof iikoDraftChoiceScore==='function'?iikoDraftChoiceScore:()=>0;
- return source.filter(p=>!p.type||['DISH','PREPARED'].includes(String(p.type).toUpperCase()))
+ return source.filter(p=>allTypes||!p.type||['DISH','PREPARED'].includes(String(p.type).toUpperCase()))
    .map(p=>({p,rank:score(p,query)})).filter(x=>x.rank>0)
    .sort((a,b)=>b.rank-a.rank||a.p.name.localeCompare(b.p.name,'ru'))
    .slice(0,30).map(x=>x.p);
+}
+// One list of unique source names for ALL transfer documents. It shares the
+// cooking-act resolver and the same persistent MAIN mapping rows.
+function transferMappingEntries(){
+ const entries=new Map();
+ for(const doc of typeof productionDocuments!=='undefined'?productionDocuments:[]){
+   for(const item of transferAllItems(doc)){
+     const key=iikoDraftSourceKey(item.name);
+     if(!key||entries.has(key))continue;
+     const resolved=iikoDraftResolveProduct(item);
+     entries.set(key,{key,name:item.name,product:resolved.product||null,
+       source:resolved.source||'',reason:resolved.error||''});
+   }
+ }
+ return [...entries.values()].sort((a,b)=>
+   Number(Boolean(a.product))-Number(Boolean(b.product))||
+   a.name.localeCompare(b.name,'ru'));
+}
+function transferMappingCard(entry,index){
+ const search=transferLive.mappingQueries.get(entry.key)||iikoDraftPrefix(entry.name);
+ const allTypes=false;
+ const picker=transferMatchCandidates(search,allTypes);
+ const open=!entry.product||transferLive.editKeys.has(entry.key);
+ return '<div class="iiko-mapping-card" id="transferMappingEntry-'+index+'">'+
+   '<div><b>'+transferEscape(entry.name)+'</b></div>'+
+   '<div class="muted">До скобок: '+transferEscape(entry.key)+'</div>'+
+   (entry.product?
+     '<div>Сопоставлено с iiko: <b>'+transferEscape(entry.product.name)+'</b>'+
+     (entry.source==='saved'?' (запомнено в MAIN)':' (по названию)')+'</div>':
+     '<div class="muted">'+transferEscape(entry.reason||'Не сопоставлено')+'</div>')+
+   '<div id="transferMappingControls-'+index+'"'+(open?'':' hidden')+'>'+
+   '<input type="search" id="transferSearch-'+index+'" value="'+transferEscape(search)+
+      '" placeholder="Введите название или артикул" oninput="transferFilterProduct('+index+')">'+
+   '<label style="display:flex;align-items:center;gap:8px;font-size:14px">'+
+    '<input type="checkbox" id="transferAllTypes-'+index+
+    '" style="width:16px;min-width:16px;max-width:16px;height:16px" onchange="transferFilterProduct('+index+')">'+
+    'Все типы номенклатуры (не только блюда)</label>'+
+   '<select id="transferProduct-'+index+'">'+
+      '<option value="">Выберите блюдо iiko</option>'+
+      picker.map(p=>'<option value="'+transferEscape(p.id)+'">'+transferEscape(p.name)+
+        (p.article?' · '+transferEscape(p.article):'')+
+        (p.type?' · '+transferEscape(p.type):'')+'</option>').join('')+
+    '</select>'+
+   '<small class="muted" id="transferChoiceNote-'+index+'">'+
+     (picker.length?'Найдено '+picker.length+' подходящих позиций. Выберите правильную.':
+       'Совпадений не найдено — уточните название или выберите «Все типы».')+
+   '</small>'+
+   '<button type="button" onclick="transferSaveMapping('+index+')">Подтвердить и запомнить</button></div>'+
+   (entry.product&&!open?'<button class="transfer-map-button" type="button" onclick="transferEditMapping('+index+')">Изменить соответствие</button>':'')+
+ '</div>';
+}
+function transferRenderMappingPanel(){
+ const entries=transferLive.mappingEntries=transferMappingEntries();
+ const saved=typeof iikoDraftState!=='undefined'?iikoDraftState.mappings:new Map();
+ const matched=entries.filter(x=>x.product).length;
+ const missing=entries.length-matched;
+ const remembered=entries.filter(x=>x.product&&x.source==='saved').length;
+ const missingList=entries.map((entry,i)=>({entry,i})).filter(x=>!x.entry.product||
+   transferLive.editKeys.has(x.entry.key));
+ const savedRows=[...saved.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ru'));
+ const savedHtml='<details class="transfer-saved-mappings"><summary>Запомненные соответствия MAIN ('+
+   savedRows.length+')</summary>'+
+  '<p class="muted">Общий справочник для приготовления и перемещений.</p>'+
+  (savedRows.length?'<div class="tablewrap"><table class="nomtable"><thead>'+
+   '<tr><th>Блюдо из плана</th><th>Номенклатура iiko</th><th>Артикул</th></tr></thead><tbody>'+
+   savedRows.map(([key,row])=>'<tr><td>'+transferEscape(key)+'</td><td>'+
+     transferEscape(row.target_name)+'</td><td>'+
+     transferEscape(row.target_article||row.target_id||'')+'</td></tr>').join('')+
+   '</tbody></table></div>':'<p>Пока нет подтверждённых соответствий.</p>')+
+  '</details>';
+ const pending=!transferLive.connected?
+   '<p class="muted">Для сопоставления сначала загрузите склады и номенклатуру iiko. '+
+   'Если MAIN подключён, справочник загрузится автоматически.</p>':'';
+ const stateError=typeof iikoDraftState!=='undefined'?
+   (iikoDraftState.mappingError||''):'';
+ const errors=stateError?'<p class="muted">'+transferEscape(stateError)+'</p>':'';
+ const summary='<h3>Сопоставление номенклатуры iiko</h3>'+
+   '<p><b>Сопоставлено: '+matched+' из '+entries.length+'</b>'+
+   ' · по сохранённым соответствиям: '+remembered+
+   ' · требуется сопоставить: '+missing+'</p>';
+ const unresolved=missingList.length?
+  '<h4>Требуется проверить / сопоставить ('+missingList.length+')</h4>'+
+  '<p class="muted">Поиск, выбор блюда и кнопка «Подтвердить и запомнить» работают точно так же, '+
+    'как в актах приготовления. Сохраняются для обеих вкладок.</p>'+
+  '<div class="iiko-mapping-list">'+missingList.map(x=>transferMappingCard(x.entry,x.i)).join('')+'</div>':
+  '<p>Все позиции из плана сопоставлены. Проверьте блюда и количества перед отправкой.</p>';
+ const matchedRows=entries.map((entry,i)=>({entry,i})).filter(x=>x.entry.product);
+ const matchedHTML='<details><summary>Посмотреть все подобранные блюда ('+matchedRows.length+')</summary>'+
+   (matchedRows.length?'<div class="tablewrap"><table class="nomtable"><thead>'+
+     '<tr><th>Название в плане</th><th>Номенклатура iiko</th><th>Источник</th><th></th></tr></thead><tbody>'+
+     matchedRows.map(({entry,i})=>'<tr><td>'+transferEscape(entry.name)+
+       '</td><td>'+transferEscape(entry.product.name)+'</td><td>'+
+       (entry.source==='saved'?'Запомнено в MAIN':'Точное название')+'</td><td>'+
+       '<button type="button" onclick="transferEditMapping('+i+')">Изменить</button></td></tr>').join('')+
+     '</tbody></table></div>':'<p>Пока нет совпадений.</p>')+'</details>';
+ return '<section id="transferMappingPanel">'+summary+pending+errors+unresolved+
+   matchedHTML+savedHtml+'</section>';
+}
+function transferEditMapping(index){
+ const entry=transferLive.mappingEntries[index];
+ if(!entry)return;
+ transferLive.editKeys.add(entry.key);
+ transferRender();
+ const el=document.getElementById('transferMappingEntry-'+
+   transferLive.mappingEntries.findIndex(x=>x.key===entry.key));
+ if(el)el.scrollIntoView({block:'center',behavior:'smooth'});
+}
+function transferFocusMapping(di,li){
+ const item=transferAllItems(productionDocuments?.[di])[li];
+ if(!item)return;
+ const key=iikoDraftSourceKey(item.name);
+ const index=transferLive.mappingEntries.findIndex(x=>x.key===key);
+ if(index>=0)transferEditMapping(index);
+}
+function transferFilterProduct(index){
+ const entry=transferLive.mappingEntries[index];
+ const input=document.getElementById('transferSearch-'+index);
+ const picker=document.getElementById('transferProduct-'+index);
+ const note=document.getElementById('transferChoiceNote-'+index);
+ if(!entry||!picker)return;
+ const query=String(input?.value||'').trim();
+ transferLive.mappingQueries.set(entry.key,query);
+ const allTypes=Boolean(document.getElementById('transferAllTypes-'+index)?.checked);
+ const products=query?transferMatchCandidates(query,allTypes):[];
+ picker.innerHTML='<option value="">'+
+   (query?'Выберите позицию iiko':'Введите название или артикул')+'</option>'+
+   products.map(p=>'<option value="'+transferEscape(p.id)+'">'+transferEscape(p.name)+
+     (p.article?' · '+transferEscape(p.article):'')+
+     (p.type?' · '+transferEscape(p.type):'')+'</option>').join('');
+ picker.value='';
+ if(note)note.textContent=products.length?'Найдено '+products.length+' позиций — выберите нужную.':
+   allTypes?'Ничего не найдено, уточните название или артикул.':
+   'Среди блюд совпадений нет. Попробуйте «Все типы».';
+}
+async function transferSaveMapping(index){
+ const entry=transferLive.mappingEntries[index];
+ const field=document.getElementById('transferProduct-'+index);
+ const id=String(field?.value||'');
+ const product=iikoDraftState.catalogList.find(p=>p.id===id);
+ if(!entry||!product){transferStatus('Выберите конкретную позицию iiko из списка.',true);return}
+ if(transferLive.busy)return;
+ if(product.type&&!['DISH','PREPARED'].includes(String(product.type).toUpperCase())){
+   if(!window.confirm('Вы выбрали '+product.type+' — не готовое блюдо. Запомнить?'))return;
+ }
+ transferLive.busy=true;
+ transferRefreshSendButtons();
+ transferStatus('Сохраняю общее сопоставление MAIN для приготовления и перемещений…');
+ try{
+   await iikoDraftSaveMapping(entry.name,product);
+   transferLive.editKeys.delete(entry.key);
+   transferLive.mappingQueries.delete(entry.key);
+   transferStatus('Запомнено: «'+entry.name+'» → «'+product.name+
+     '». Соответствие применяется в обеих вкладках.');
+ }catch(e){
+   transferStatus('Не удалось сохранить соответствие: '+String(e.message||e),true);
+ }finally{
+   transferLive.busy=false;
+   transferRender();
+ }
 }
 function transferStoreOptions(routeName,selectedId){
  const options=transferLive.stores.map(s=>'<option value="'+transferEscape(s.id)+'"'+
@@ -72,31 +231,20 @@ function transferRememberStore(di,kind,value){
 function transferRowDate(){
  if(typeof productionSyncTransferDate==='function')productionSyncTransferDate();
 }
-function transferProductControls(di,li,item,selected){
- const options=transferMatchCandidates(transferPrefix(item.name));
- if(selected&&!options.some(x=>x.id===selected.id))options.unshift(selected);
- const choices='<option value="">Выберите блюдо iiko</option>'+
-   options.map(p=>'<option value="'+transferEscape(p.id)+'"'+
-     (selected?.id===p.id?' selected':'')+'>'+transferEscape(p.name)+
-     (p.article?' · '+transferEscape(p.article):'')+'</option>').join('');
- return '<div class="transfer-product-controls" id="transferMapBox-'+di+'-'+li+'"'+(selected?' hidden':'')+'>'+
-   '<input type="search" id="transferSearch-'+di+'-'+li+'" value="'+transferEscape(transferPrefix(item.name))+
-   '" placeholder="Название блюда или артикул" oninput="transferFilterProduct('+di+','+li+',this.value)">'+
-   '<select id="transferProduct-'+di+'-'+li+'" onchange="transferChooseProduct('+di+','+li+',this.value)">'+
-   choices+'</select></div>';
-}
 function transferDetailItems(doc,di){
  return '<div class="tablewrap"><table class="nomtable"><thead><tr>'+
-   '<th>Блюдо из Excel</th><th>Количество</th><th>Позиция iiko</th></tr></thead><tbody>'+
+   '<th>Блюдо из Excel</th><th>Количество</th><th>Номенклатура iiko</th></tr></thead><tbody>'+
    transferAllItems(doc).map((item,li)=>{
-     const product=transferFindProduct(item,di,li);
+     const result=typeof iikoDraftResolveProduct==='function'?
+       iikoDraftResolveProduct(item):{error:'Справочник недоступен'};
+     const product=result.product||null;
      return '<tr><td>'+transferEscape(item.name)+'</td><td class="numeric">'+
        transferEscape(item.quantity)+'</td><td>'+
-       '<span id="transferMatchLabel-'+di+'-'+li+'">'+
-       (product?transferEscape(product.name):'Не сопоставлено')+'</span> '+
-       '<button class="transfer-map-button" type="button" onclick="transferToggleMapping('+di+','+li+')">'+
-       (product?'Изменить':'Выбрать блюдо')+'</button>'+
-       transferProductControls(di,li,item,product)+'</td></tr>';
+       (product?'<b>'+transferEscape(product.name)+'</b>'+
+         (result.source==='saved'?' · Запомнено':''):
+         '<strong>Не сопоставлено</strong> · '+transferEscape(result.error||''))+
+       ' <button class="transfer-map-button" type="button" onclick="transferFocusMapping('+di+','+li+')">'+
+       (product?'Изменить':'Сопоставить')+'</button></td></tr>';
    }).join('')+'</tbody></table></div>';
 }
 function transferRender(){
@@ -105,6 +253,7 @@ function transferRender(){
  const nextSig=transferSignature();
  if(nextSig!==transferLive.sig){
    transferLive.sig=nextSig;transferLive.mapped.clear();transferLive.warehouse.clear();
+   transferLive.mappingQueries.clear();transferLive.editKeys.clear();
  }
  const docs=productionDocuments;
  const totalQty=doc=>transferAllItems(doc).reduce((n,x)=>n+Number(x.quantity),0);
@@ -143,7 +292,7 @@ function transferRender(){
   '</article>';
  }).join('');
  area.hidden=false;
- area.innerHTML='<h3>Шаг 2. Документы перемещений — '+transferEscape(productionSheetName)+'</h3>'+
+ area.innerHTML=transferRenderMappingPanel()+'<h3>Документы перемещений — '+transferEscape(productionSheetName)+'</h3>'+
  '<p class="muted">Непроведённые документы NEW. Сумма пока не рассчитана: данных о себестоимости нет. '+
  'Перед отправкой откройте документ и проверьте склад и номенклатуру.</p>'+
  '<p class="muted">Если название склада iiko отличается от названия в плане, выберите его внутри документа.</p>'+
@@ -184,57 +333,6 @@ function transferRefreshSendButtons(){
     locked?'Проверьте в iiko':!transferUpstreamReady(i)?'Сначала ПК → БК':'Отправить в iiko';
  }
 }
-function transferToggleMapping(di,li){
- const el=document.getElementById('transferMapBox-'+di+'-'+li);
- if(el)el.hidden=!el.hidden;
-}
-function transferFilterProduct(di,li,text){
- const el=document.getElementById('transferProduct-'+di+'-'+li);if(!el)return;
- const candidates=transferMatchCandidates(text);
- el.innerHTML='<option value="">Выберите позицию iiko</option>'+
- candidates.map(p=>'<option value="'+transferEscape(p.id)+'">'+transferEscape(p.name)+
-   (p.article?' · '+transferEscape(p.article):'')+'</option>').join('');
-}
-async function transferChooseProduct(di,li,id){
- const product=transferLive.catalogById.get(id);
- const item=productionDocuments?.[di]?.items?.[li];
- if(!product||!item||transferLive.busy)return;
- const pair=typeof planGuestStored==='function'?planGuestStored():null;
- if(!pair?.deviceId||!pair?.token){
-   transferStatus('Сначала подключите MAIN для общего сохранения соответствия.',true);
-   return;
- }
- if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId){
-   transferStatus('Загружаю общий справочник MAIN…');
-   await iikoDraftLoadMappings();
- }
- if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId){
-   transferStatus(iikoDraftState.mappingError||'Общий справочник не загрузился.',true);
-   return;
- }
- const key=iikoDraftSourceKey(item.name);
- if(!key||key.length>300){transferStatus('Некорректное название блюда.',true);return}
- transferLive.busy=true;
- transferRefreshSendButtons();
- transferStatus('Сохраняю соответствие для актов приготовления и перемещений…');
- try{
-   await planGuestFetch('iiko_map_save',{
-     source_key:key,target_name:product.name,target_id:product.id||'',
-     target_article:product.article||''
-   });
-   iikoDraftState.mappings.set(key,{source_key:key,target_name:product.name,
-     target_id:product.id||'',target_article:product.article||''});
-   if(typeof iikoDraftRenderSaved==='function')iikoDraftRenderSaved();
-   if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
-   transferStatus('Соответствие «'+item.name+'» → «'+product.name+
-     '» сохранено для обеих вкладок.');
- }catch(e){
-   transferStatus('Не удалось сохранить соответствие в MAIN: '+String(e.message||e),true);
- }finally{
-   transferLive.busy=false;
-   transferRender();
- }
-}
 async function transferConnect(){
  if(transferLive.busy)return;
  transferLive.busy=true;
@@ -246,6 +344,9 @@ async function transferConnect(){
      throw Error('Общий модуль сопоставлений не загружен');
    const pair=typeof planGuestStored==='function'?planGuestStored():null;
    if(!pair?.deviceId||!pair?.token)throw Error('Сначала подключите MAIN');
+   // Read saved MAIN correspondences even when the live iiko catalogue fails.
+   if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId)
+     await iikoDraftLoadMappings();
    if(!iikoLiveState.connected||iikoLiveState.mainDevice!==pair.deviceId)
      await iikoLiveConnect();
    if(!iikoLiveState.connected||iikoLiveState.mainDevice!==pair.deviceId)
