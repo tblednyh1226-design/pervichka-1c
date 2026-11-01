@@ -139,6 +139,7 @@ function transferRender(){
   const lock=transferLockKey(doc,i);
   const isLocked=transferLive.locks.has(lock)||Boolean(localStorage.getItem(lock));
   const res=transferLive.receipts.get(lock);
+  const persisted=String(localStorage.getItem(lock)||'');
   const from=transferStore(i,'from'),to=transferStore(i,'to');
   const disabled=!transferLive.connected||isLocked||transferLive.busy||!from||!to||
     transferAllItems(doc).some((item,j)=>!transferFindProduct(item,i,j));
@@ -149,7 +150,7 @@ function transferRender(){
     '<div><span class="transfer-label">Количество</span><strong>'+totalQty(doc).toLocaleString('ru-RU')+'</strong></div>'+
     '<div><span class="transfer-label">Сумма, ₽</span><strong title="Себестоимость пока не загружена">—</strong></div>'+
     '<div><button type="button" class="primary transfer-send" id="transferSend-'+i+'"'+(disabled?' disabled':'')+
-      ' onclick="transferSend('+i+')">'+(res?.ok?'Отправлено':isLocked?'Проверьте в iiko':'Отправить в iiko')+'</button></div>'+
+      ' onclick="transferSend('+i+')">'+(res?.ok||persisted.startsWith('confirmed:')?'Отправлено':isLocked?'Проверьте в iiko':'Отправить в iiko')+'</button></div>'+
    '</div>'+
    '<details class="transfer-detail" id="transferDetail-'+i+'"><summary>Проверить блюда и количество ('+
      doc.items.length+' поз.)</summary>'+
@@ -164,6 +165,8 @@ function transferRender(){
    '</details>'+
    (res?'<p class="transfer-receipt">'+(res.ok?'iiko приняла документ NEW'+(res.number?', № '+transferEscape(res.number):''):
      'Результат неизвестен — проверьте документ в iiko перед повтором')+'</p>':'')+
+   (persisted==='pending'?'<button type="button" class="transfer-map-button" onclick="transferUnlock('+i+')">'+
+      'Я проверила в iiko: документа нет — разрешить повтор</button>':'')+
   '</article>';
  }).join('');
  area.hidden=false;
@@ -174,6 +177,24 @@ function transferRender(){
  items;
  transferRefreshSendButtons();
 }
+function transferUpstreamReady(index){
+ if(index===0)return true;
+ const first=productionDocuments?.[0];
+ if(!first||first.source!=='Правда кухня'||first.target!=='Бухара кухня')return true;
+ const key=transferLockKey(first,0);
+ return String(localStorage.getItem(key)||'').startsWith('confirmed:');
+}
+function transferUnlock(index){
+ const doc=productionDocuments?.[index];if(!doc)return;
+ const key=transferLockKey(doc,index);
+ if(localStorage.getItem(key)!=='pending')return;
+ if(!window.confirm('Вы лично проверили журнал внутренних перемещений iiko и убедились, что этого документа там НЕТ? Разрешить одну новую попытку?'))return;
+ localStorage.removeItem(key);
+ transferLive.locks.delete(key);
+ transferLive.receipts.delete(key);
+ transferRender();
+ transferStatus('Повтор разрешён после ручной проверки iiko. Перед отправкой ещё раз сверьте позиции.');
+}
 function transferRefreshSendButtons(){
  if(typeof productionDocuments==='undefined')return;
  for(let i=0;i<productionDocuments.length;i++){
@@ -182,11 +203,12 @@ function transferRefreshSendButtons(){
   const key=transferLockKey(doc,i);
   const ready=transferLive.connected&&transferStore(i,'from')&&transferStore(i,'to')&&
    transferStore(i,'from')!==transferStore(i,'to')&&
-   transferAllItems(doc).every((x,j)=>transferFindProduct(x,i,j));
+   transferAllItems(doc).every((x,j)=>transferFindProduct(x,i,j))&&transferUpstreamReady(i);
   const locked=transferLive.locks.has(key)||Boolean(localStorage.getItem(key));
   btn.disabled=transferLive.busy||!ready||locked;
-  btn.textContent=transferLive.receipts.get(key)?.ok?'Отправлено':
-    locked?'Проверьте в iiko':'Отправить в iiko';
+  btn.textContent=transferLive.receipts.get(key)?.ok||
+    String(localStorage.getItem(key)||'').startsWith('confirmed:')?'Отправлено':
+    locked?'Проверьте в iiko':!transferUpstreamReady(i)?'Сначала ПК → БК':'Отправить в iiko';
  }
 }
 function transferToggleMapping(di,li){
@@ -260,6 +282,9 @@ async function transferSend(index){
  const doc=productionDocuments[index];
  if(!doc||!doc.items?.length)return;
  const key=transferLockKey(doc,index);
+ if(!transferUpstreamReady(index)){
+   transferStatus('Сначала отправьте и подтвердите перемещение ПК → БК.',true);return;
+ }
  if(transferLive.locks.has(key)||localStorage.getItem(key)){
    transferStatus('Этот документ уже отправлялся. Перед повтором обязательно проверьте iiko.',true);return;
  }
