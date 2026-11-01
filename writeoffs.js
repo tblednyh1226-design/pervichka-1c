@@ -8,7 +8,7 @@ const groupTitle = Object.fromEntries(groups);
 let userId = '', workspaceId = '', orgId = '';
 let catalog = [], catalogByName = new Map(), currentId = null, revision = null, currentStatus = 'draft';
 let entries = {raw:[],semi:[],dish:[]}, journalData = [];
-let dirty = false, busy = false, loading = true;
+let dirty = false, busy = false, loading = true, viewOnly = false;
 
 const blank = (group) => ({key: crypto.randomUUID(), group, nomenclature_id:null, code:'', name:'', qty:'', unit:'', reason:''});
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -20,13 +20,13 @@ function resetEntries() {entries={raw:[],semi:[],dish:[]};for(const [group] of g
 function lineCount(group){return entries[group].filter(r=>r.name.trim()).length}
 function repaintCounts(){for(const [group] of groups)$('count-'+group).textContent='· '+lineCount(group)+' заполнено'}
 function updateMode(){
- const sent=currentStatus==='submitted';
+ const sent=currentStatus==='submitted'||viewOnly;
  $('editorFields').disabled=sent;
  $('itemsFields').disabled=sent;
  $('saveBtn').disabled=sent||busy;
  $('submitBtn').disabled=sent||busy;
  $('submitBtn').textContent=sent?'Уже отправлено':'Отправить в журнал';
- $('stateBadge').textContent=sent?'Отправлено':(currentId?'Черновик в журнале':'Новый черновик');
+ $('stateBadge').textContent=viewOnly?'Черновик · просмотр':(currentStatus==='submitted'?'Отправлено':(currentId?'Черновик в журнале':'Новый черновик'));
  $('catalogStatus').textContent=catalog.length?'Справочник: '+catalog.length+' позиций':'Справочник пока пуст';
  repaintCounts();
 }
@@ -76,8 +76,8 @@ function paintGroup(group){
 function paintAll(){for(const [group] of groups)paintGroup(group);updateMode()}
 function newForm(ask=true){
  if(ask&&dirty&&!confirm('Есть несохранённые изменения. Создать новый документ?'))return;
- clearLocal();loading=true;
- currentId=null;revision=null;currentStatus='draft';dirty=false;
+ if(ask||!loading)clearLocal();loading=true;
+ currentId=null;revision=null;currentStatus='draft';viewOnly=false;dirty=false;
  $('docDate').value=today();$('shift').value='';$('warehouse').value='';
  resetEntries();paintAll();loading=false;
  say('Новый документ. Можно заполнять постепенно; изменения временно сохраняются и в этом браузере.');
@@ -115,7 +115,7 @@ async function withBusy(fn){
  finally{busy=false;updateMode()}
 }
 async function saveDraft(){
- if(currentStatus==='submitted')return;
+ if(currentStatus==='submitted'||viewOnly)return;
  await withBusy(async()=>{
   const payload=headerPayload(false);
   let result;
@@ -131,7 +131,7 @@ async function saveDraft(){
  });
 }
 async function submit(){
- if(currentStatus==='submitted')return;
+ if(currentStatus==='submitted'||viewOnly)return;
  let payload;
  try{payload=headerPayload(true)}catch(e){say(e.message,'error');return}
  if(!confirm('Отправить списание в общий журнал? После отправки его нельзя будет редактировать. В 1С документ не отправляется.'))return;
@@ -150,7 +150,7 @@ async function submit(){
 }
 function fillDocument(doc,copy=false){
  loading=true;
- currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;currentStatus=copy?'draft':doc.status;dirty=false;
+ currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;currentStatus=copy?'draft':doc.status;viewOnly=!copy&&doc.status==='draft'&&doc.created_by!==userId;dirty=false;
  $('docDate').value=doc.doc_date||today();$('shift').value=doc.shift||'';$('warehouse').value=doc.warehouse||'';
  entries={raw:[],semi:[],dish:[]};
  for(const item of (doc.items||[])){
@@ -211,10 +211,7 @@ async function onJournalClick(e){
  if(b.dataset.action==='open'){
   if(!maybeLeave())return;
   fillDocument(doc);
-  if(doc.status==='draft'&&doc.created_by!==userId){
-   currentStatus='submitted';updateMode();
-   say('Это черновик другого пользователя. Доступен просмотр или создание собственной копии.');
-  }
+  if(viewOnly)say('Это черновик другого пользователя. Доступен просмотр или создание собственной копии.');
  }
  if(b.dataset.action==='copy'){if(!maybeLeave())return;fillDocument(doc,true)}
  if(b.dataset.action==='delete'){
@@ -246,7 +243,7 @@ function restore(){
  try{raw=JSON.parse(localStorage.getItem(storeKey())||'null')}catch(_){}
  if(!raw||!raw.entries)return false;
  loading=true;
- currentId=raw.id||null;revision=raw.revision||null;currentStatus='draft';
+ currentId=raw.id||null;revision=raw.revision||null;currentStatus='draft';viewOnly=false;
  $('docDate').value=raw.date||today();$('shift').value=raw.shift||'';$('warehouse').value=raw.warehouse||'';
  entries={raw:[],semi:[],dish:[]};
  for(const [g] of groups){
