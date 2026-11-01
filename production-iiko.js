@@ -18,8 +18,6 @@ function productionClearSource(message){
  window.productionContext=null;
  const select=document.getElementById('prodsheet');
  if(select)select.innerHTML='<option value="">Загрузите отдельный план перемещений</option>';
- const recipients=document.getElementById('prodrecipients');
- if(recipients)recipients.innerHTML='';
  const rev=document.getElementById('prodPastryColumns');
  if(rev){rev.hidden=true;rev.innerHTML=''}
  const result=document.getElementById('prodresult');
@@ -55,7 +53,6 @@ function productionLoadIndependentBook(bytes,name){
  try{productionSelectSheet()}catch(e){
    parsed=false;error=String(e.message||e);
    productionRows=[];productionDocuments=[];window.productionContext=null;
-   const box=document.getElementById('prodrecipients');if(box)box.innerHTML='';
    const result=document.getElementById('prodresult');
    if(result){result.hidden=true;result.innerHTML=''}
  }
@@ -63,11 +60,15 @@ function productionLoadIndependentBook(bytes,name){
  if(status&&!parsed)status.textContent='Excel с MAIN успешно получен: '+name+
    '. Выбранный лист «'+productionSheetName+
    '» не подошёл: '+error+'. Выберите другой день без повторного запроса.';
- else if(status)status.textContent='Отдельный план перемещений получен: '+name+
-  '. Лист: '+productionSheetName+'. '+
-   (window.productionContext?.pastryColumns?.needsReview?
-     'Проверьте колонки выпечки в шаге 2.':'Колонки выпечки определены.')+
+ else if(status){
+  const needsReview=Boolean(window.productionContext?.pastryColumns?.needsReview);
+  status.textContent='Отдельный план перемещений получен: '+name+
+   '. Лист: '+productionSheetName+'. '+
+   (needsReview?'Подтвердите колонки выпечки перед формированием.':
+     productionDocuments.length?'Сформировано '+productionDocuments.length+' перемещений для проверки.':
+     'Документы не сформированы: проверьте ошибку и лист.')+
    ' Утренний план не изменён.';
+ }
 }
 async function productionOpen(){
  const file=document.getElementById('prodfile')?.files?.[0];
@@ -317,7 +318,8 @@ function productionConfirmPastryColumns(){
    brCol:selected.br,headerRow:context.pastryColumns.headerRow,
    needsReview:false,manuallyConfirmed:true};
  productionRenderPastryReview();
- document.getElementById('prodstatus').textContent='Колонки выпечки подтверждены. Можно формировать документы.';
+ document.getElementById('prodstatus').textContent='Колонки выпечки подтверждены. Формирую черновики для проверки…';
+ productionBuild();
 }
 // Sheet and iiko-document dates are always the same business day.
 function productionMoscowToday(){
@@ -408,18 +410,6 @@ function productionSelectSheet(){
    .filter(x=>x.name&&x.col>=4&&!productionSkip.test(x.name)&&
       !productionPoint(x.name));
  window.productionContext={header,heads,options,pastry,pastryColumns,unknown};
- const container=document.getElementById('prodrecipients');
- container.innerHTML='<div class="orgrow"><span><b>ПК → БК · Правда кухня → Бухара кухня</b>'+
-  '<small>Автоматически: выпечка «Всего» минус «Раздача Правды»</small></span>'+
-  '<strong>Автоматический маршрут</strong></div>'+options.map(o=>
-  '<div class="orgrow"><span><b>'+productionText(o.name)+'</b>'+
-  (o.point==='ЭТМ'?'<small>ЭТМ день + ЭТМ ночь: '+(o.sources?.length||1)+
-    ' столбца, одно перемещение</small>':'')+
-  '<small>Столбец '+(o.col+1)+'</small></span>'+
-  '<select data-col="'+o.col+'" aria-label="Роль '+productionText(o.name)+'">'+
-  '<option value="point" selected>Включить в перемещения</option>'+
-  '<option value="ignore">Не учитывать</option></select></div>'
- ).join('');
  productionDocuments=[];
  const result=document.getElementById('prodresult');
  if(result){result.innerHTML='';result.hidden=true}
@@ -430,6 +420,8 @@ function productionSelectSheet(){
   (unknown.length?' Есть нераспознанные колонки: '+unknown.map(x=>x.name).join(', ')+'.':'');
  productionRenderPastryReview();
  productionSyncTransferDate();
+ // Build immediately; no intermediate destination selection required.
+ if(!pastryColumns.needsReview)productionBuild();
 }
 function productionPastryReceiverColumn(target,context){
  const cols=context.pastryColumns;
@@ -469,15 +461,12 @@ function productionBuild(){
    throw Error('Сначала получите отдельный план Excel и выберите дату');
   if(context.pastryColumns?.needsReview)
    throw Error('Перед формированием подтвердите три колонки блока выпечки.');
-  const selectors=[...document.querySelectorAll('#prodrecipients select')];
-  const columns=selectors.filter(x=>x.value==='point').flatMap(x=>{
-    const col=Number(x.dataset.col);
-    const selected=context.options.find(o=>o.col===col);
-    if(!selected)return [{col,name:String(context.heads[col]??'').trim(),point:null}];
-    return selected.sources||[{col:selected.col,name:selected.name,point:selected.point}];
-  });
-  // PK→BK must include all pastry minus PR, even if all destination
-  // checkboxes are disabled (BR and external customers remain in total).
+  // All recognised outlets are included automatically, as with the
+  // old default "Включить". ETM day and night form one destination.
+  const columns=context.options.flatMap(o=>o.sources||[
+    {col:o.col,name:o.name,point:o.point}
+  ]);
+  // ПК→БК: pastry «Всего» minus ПР, regardless of outlet selection.
   if(columns.some(x=>!x.point||['Бухара раздача','Мед экспресс','МЕГА'].includes(x.point)))
    throw Error('БР, Мед экспресс и МЕГА не выбираются как обычные получатели перемещений');
   const warnings=[],missingCodes=[],invalidValues=[];
@@ -597,8 +586,12 @@ function productionBuild(){
     result.appendChild(notes);
   }
   document.getElementById('prodstatus').textContent=
-    'Сформировано '+productionDocuments.length+' документов за '+productionSheetName+
-    '. Номенклатуру и склады проверьте перед отправкой в iiko.';
+    'Автоматически сформировано '+productionDocuments.length+' перемещений за '+productionSheetName+
+    '. Откройте документы и проверьте блюда, количества и склады до отправки в iiko.';
+  // Catalogue read only. Sending iiko documents remains manual.
+  if(typeof transferConnect==='function'&&typeof planGuestStored==='function'&&
+     planGuestStored()?.token&&typeof transferLive!=='undefined'&&
+     !transferLive.connected&&!transferLive.busy)void transferConnect();
  }catch(e){
   productionDocuments=[];
   if(result){result.innerHTML='';result.hidden=true}
