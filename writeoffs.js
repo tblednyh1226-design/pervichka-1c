@@ -263,7 +263,8 @@ async function init(){
  try{
   const auth=await sb.auth.getSession();
   if(auth.error)throw auth.error;
-  if(!auth.data.session){say('Для общего журнала войдите в аккаунт Помогатора на главной странице, затем вернитесь сюда.','error');$('stateBadge').textContent='Нужен вход';return}
+  if(!auth.data.session){$('loginCard').hidden=false;say('Для работы с общим журналом войдите в Помогатор.','error');$('stateBadge').textContent='Нужен вход';return}
+  $('loginCard').hidden=true;
   userId=auth.data.session.user.id;
   const mr=await sb.from('workspace_members').select('workspace_id').eq('user_id',userId);
   if(mr.error)throw mr.error;
@@ -281,6 +282,13 @@ async function init(){
   if(!restore())say('Подключено к общей базе. Выберите склад и добавьте позиции списания.','success');
  }catch(e){console.error(e);say('Не удалось открыть списания: '+(e.message||e),'error');$('stateBadge').textContent='Ошибка подключения'}
 }
+$('loginForm').addEventListener('submit',async(event)=>{
+ event.preventDefault();
+ const button=$('loginButton');button.disabled=true;$('loginError').textContent='Проверяю учётную запись…';
+ try{const {error}=await sb.auth.signInWithPassword({email:$('loginEmail').value.trim(),password:$('loginPassword').value});if(error)throw error;
+ $('loginError').textContent='';await init();
+ }catch(e){$('loginError').textContent='Ошибка входа: '+(e.message||e)}finally{button.disabled=false}
+});
 document.querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click',()=>{const group=b.dataset.add;entries[group].push(blank(group));paintGroup(group);persist()}));
 for(const field of ['docDate','shift','warehouse'])$(field).addEventListener('change',persist);
 $('newBtn').addEventListener('click',()=>newForm());
