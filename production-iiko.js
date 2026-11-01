@@ -97,7 +97,9 @@ async function productionMainRequest(){
  }
  productionMainBusy=true;
  const button=document.getElementById('prodRequestMainBtn');
+ const latestButton=document.getElementById('prodLatestMainBtn');
  if(button)button.disabled=true;
+ if(latestButton)latestButton.disabled=true;
  productionClearSource('Создаю НОВОЕ задание MAIN для перемещений. Утренний файл и акты не изменяются…');
  try{
   const job=await planGuestFetch('request');
@@ -124,6 +126,7 @@ async function productionMainRequest(){
  }finally{
   productionMainBusy=false;
   if(button)button.disabled=false;
+  if(latestButton)latestButton.disabled=false;
  }
 }
 // Read the last completed MAIN job WITHOUT creating a new request.
