@@ -20,6 +20,8 @@ function productionClearSource(message){
  if(select)select.innerHTML='<option value="">Загрузите отдельный план перемещений</option>';
  const recipients=document.getElementById('prodrecipients');
  if(recipients)recipients.innerHTML='';
+ const rev=document.getElementById('prodPastryColumns');
+ if(rev){rev.hidden=true;rev.innerHTML=''}
  const result=document.getElementById('prodresult');
  if(result){result.hidden=true;result.innerHTML=''}
  const status=document.getElementById('prodstatus');
@@ -46,7 +48,10 @@ function productionLoadIndependentBook(bytes,name){
  productionSelectSheet();
  const status=document.getElementById('prodstatus');
  if(status)status.textContent='Отдельный план перемещений получен: '+name+
-  '. Лист: '+productionSheetName+'. Выберите склад и получателей. Утренний план не изменён.';
+  '. Лист: '+productionSheetName+'. '+
+   (window.productionContext?.pastryColumns?.needsReview?
+     'Проверьте колонки выпечки в шаге 2.':'Колонки выпечки определены.')+
+   ' Утренний план не изменён.';
 }
 async function productionOpen(){
  const file=document.getElementById('prodfile')?.files?.[0];
@@ -290,8 +295,11 @@ function productionSelectSheet(){
  const result=document.getElementById('prodresult');
  if(result){result.innerHTML='';result.hidden=true}
  document.getElementById('prodstatus').textContent=
-  'Лист: '+productionSheetName+'. Маршруты: ПК→БК (вся выпечка кроме ПР), БК→БР (только выпечка), БК→остальные точки. ПК→ПР не создаётся.'+
+  'Лист: '+productionSheetName+'. '+
+  (pastryColumns.needsReview?'Проверьте и подтвердите колонки выпечки ниже. Пока документы заблокированы.':
+  'Маршруты: ПК→БК (вся выпечка кроме ПР), БК→БР (только выпечка), БК→остальные точки. ПК→ПР не создаётся.')+
   (unknown.length?' Есть нераспознанные колонки: '+unknown.map(x=>x.name).join(', ')+'.':'');
+ productionRenderPastryReview();
  if(typeof transferRowDate==='function')transferRowDate();
 }
 function productionQuantity(v){
@@ -308,6 +316,8 @@ function productionBuild(){
   const context=window.productionContext;
   if(!productionBook||!productionSheetName||!context)
    throw Error('Сначала получите отдельный план Excel и выберите дату');
+  if(context.pastryColumns?.needsReview)
+   throw Error('Перед формированием подтвердите три колонки блока выпечки.');
   const selectors=[...document.querySelectorAll('#prodrecipients select')];
   const columns=selectors.filter(x=>x.value==='point').map(x=>{
     const col=Number(x.dataset.col);
