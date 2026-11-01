@@ -474,14 +474,18 @@ async function transferConnect(){
    transferStatus('Единый справочник подключён: '+transferLive.catalog.length+
      ' блюд, '+transferLive.stores.length+' складов, '+
      iikoDraftState.mappings.size+' подтверждённых соответствий. Одинаково для обеих вкладок.');
-   if(productionDocuments?.length){
-     transferRender();
-     void transferReconcile();
-   }
+   if(productionDocuments?.length)transferRender();
  }catch(e){
    transferLive.connected=false;
    transferStatus('Справочник: '+String(e.message||e),true);
- }finally{transferLive.busy=false;if(button)button.disabled=false;transferRefreshSendButtons()}
+ }finally{
+   transferLive.busy=false;
+   if(button)button.disabled=false;
+   transferRefreshSendButtons();
+   // A read-only reconciliation must start AFTER the catalogue connection
+   // has released its busy flag, otherwise it silently does not run.
+   if(transferLive.connected&&productionDocuments?.length)void transferReconcile();
+ }
 }
 async function transferPost(doc){
  const pair=typeof planGuestStored==='function'?planGuestStored():null;
