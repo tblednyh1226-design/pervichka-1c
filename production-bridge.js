@@ -49,6 +49,7 @@ function planBridgeToggleCodeVisibility(){
 // never retry uncertain job creation or iiko document submissions.
 const planGuestReadActions=new Set(['device_status','latest','status','iiko_map_list']);
 const planGuestIdempotentActions=new Set(['claim','iiko_map_save','iiko_map_delete']);
+const planGuestInflightReads=new Map();
 const planGuestTimeoutMs={primary:30000,relay:45000,request:45000,download:120000};
 async function planGuestTransport(route,action,extra={},isClaim=false,download=false){
   const {deviceId,token}=planGuestStored();
@@ -123,14 +124,23 @@ async function planGuestReadRace(action,extra={},download=false){
 }
 async function planGuestFetch(action,extra={},isClaim=false){
  if(planGuestReadActions.has(action)){
-   const started=Date.now();
-   try{return await planGuestReadRace(action,extra)}
-   catch(error){
-     // One safe retry after a FAST transient network failure. Never retry
-     // after lengthy timeouts; never issue the same CREATE request twice.
-     if(!error.planTransport||Date.now()-started>15000)throw error;
-     await new Promise(resolve=>setTimeout(resolve,1100));
-     return await planGuestReadRace(action,extra);
+   const key=action+':'+JSON.stringify(extra);
+   if(planGuestInflightReads.has(key))return planGuestInflightReads.get(key);
+   const promise=(async()=>{
+     const started=Date.now();
+     try{return await planGuestReadRace(action,extra)}
+     catch(error){
+       // One safe retry after a FAST transient network failure. Never retry
+       // after lengthy timeouts; never issue the same CREATE request twice.
+       if(!error.planTransport||Date.now()-started>15000)throw error;
+       await new Promise(resolve=>setTimeout(resolve,1100));
+       return await planGuestReadRace(action,extra);
+     }
+   })();
+   planGuestInflightReads.set(key,promise);
+   try{return await promise}
+   finally{
+     if(planGuestInflightReads.get(key)===promise)planGuestInflightReads.delete(key);
    }
  }
  const route=planGuestPreferredRoute;
