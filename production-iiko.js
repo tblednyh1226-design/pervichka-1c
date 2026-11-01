@@ -208,6 +208,7 @@ function productionSelectSheet(){
  document.getElementById('prodstatus').textContent=
   'Лист: '+productionSheetName+'. Маршруты: ПК→БК (вся выпечка кроме ПР), БК→БР (только выпечка), БК→остальные точки. ПК→ПР не создаётся.'+
   (unknown.length?' Есть нераспознанные колонки: '+unknown.map(x=>x.name).join(', ')+'.':'');
+ if(typeof transferRowDate==='function')transferRowDate();
 }
 function productionQuantity(v){
  if(typeof v==='number')return Number.isFinite(v)?v:null;
@@ -337,39 +338,19 @@ function productionBuild(){
   });
   if(!productionDocuments.length)
     throw Error('Нет положительных количеств для выбранных точек');
-  const escaped=productionText;
-  const cards=productionDocuments.map(doc=>{
-    const total=doc.items.reduce((sum,item)=>sum+item.quantity,0);
-    return '<details><summary><b>'+escaped(doc.source)+' → '+escaped(doc.target)+
-      '</b> · '+doc.items.length+' поз. · '+total+' шт.</summary>'+
-      '<div class="tablewrap"><table class="nomtable"><thead><tr>'+
-      '<th>Код</th><th>Блюдо</th><th>Количество</th></tr></thead><tbody>'+
-      doc.items.map(item=>'<tr><td>'+escaped(item.code||'—')+'</td>'+
-        '<td>'+escaped(item.name)+'</td><td>'+item.quantity+'</td></tr>').join('')+
-      '</tbody></table></div></details>';
-  }).join('');
-  result.innerHTML='<h3>Черновики перемещений · '+escaped(productionSheetName)+'</h3>'+
-    '<p>Документов: <b>'+productionDocuments.length+'</b>. Порядок: '+
-    '<b>ПК→БК</b> (вся выпечка минус ПР), затем <b>БК→БР</b> (только выпечка) '+
-    'и <b>БК→остальные точки</b>. ПК→ПР не формируется.</p>'+
-    '<p>ЭТМ день: <b>'+etmDay+'</b>; ЭТМ ночь: <b>'+etmNight+
-      '</b>. Объединены в один склад ЭТМ. БК→БР: <b>'+brPastryMoved+
-      '</b> единиц только выпечки (предварительно включены в ПК→БК). '+
-      'Остальные блюда БР: <b>'+excludedBRRegular+
-      '</b> единиц без перемещения. Выпечка ПР <b>'+excludedPRPastry+
-      '</b> единиц полностью исключена из перемещений.</p>'+
-    (warnings.length||missingCodes.length?
-     '<p style="color:#9d4b17"><b>Проверить:</b> '+
-       [...warnings,...missingCodes].slice(0,40).map(escaped).join('; ')+'</p>':
-     '<p>Нераспознанных колонок и строк без кода среди перемещений не обнаружено.</p>')+
-    cards+
-    '<p class="muted">Черновики для проверки. ПК→БК: выпечка «Всего» минус ПР; БК→БР: выпечка из собственной колонки БР. Для больших пирогов перевод в куски ещё не применяется к перемещениям. '+
-    'Номенклатуру и склады требуется сверить с iiko. Никакой выгрузки или проведения.</p>'+
-    '<button onclick="productionExport()">Скачать черновики перемещений (JSON)</button>';
+  const warningsAll=[...warnings,...missingCodes];
   result.hidden=false;
+  if(typeof transferRender==='function')transferRender();
+  else result.textContent='Черновики готовы: '+productionDocuments.length;
+  if(warningsAll.length){
+    const notes=document.createElement('p');
+    notes.className='transfer-warnings';
+    notes.textContent='Требует проверки: '+warningsAll.slice(0,30).join('; ');
+    result.appendChild(notes);
+  }
   document.getElementById('prodstatus').textContent=
-    'Готово: '+productionDocuments.length+' черновиков по новым маршрутам за '+
-    productionSheetName+'. В iiko ничего не выгружено.';
+    'Сформировано '+productionDocuments.length+' документов за '+productionSheetName+
+    '. Номенклатуру и склады проверьте перед отправкой в iiko.';
  }catch(e){
   productionDocuments=[];
   if(result){result.innerHTML='';result.hidden=true}
