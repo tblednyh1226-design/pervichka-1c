@@ -97,7 +97,9 @@ async function productionMainRequest(){
  }
  productionMainBusy=true;
  const button=document.getElementById('prodRequestMainBtn');
+ const latestButton=document.getElementById('prodLatestMainBtn');
  if(button)button.disabled=true;
+ if(latestButton)latestButton.disabled=true;
  productionClearSource('Создаю НОВОЕ задание MAIN для перемещений. Утренний файл и акты не изменяются…');
  try{
   const job=await planGuestFetch('request');
@@ -124,6 +126,44 @@ async function productionMainRequest(){
  }finally{
   productionMainBusy=false;
   if(button)button.disabled=false;
+  if(latestButton)latestButton.disabled=false;
+ }
+}
+// Read the last completed MAIN job WITHOUT creating a new request.
+// The transfer workbook remains independent of the morning cooking workbook.
+async function productionMainLoadLatest(){
+ if(productionMainBusy)return;
+ if(typeof planGuestFetch!=='function'||typeof planGuestTransport!=='function'){
+   productionError(Error('Модуль подключения MAIN не загружен'));return;
+ }
+ if(typeof planBridgeBusy!=='undefined'&&planBridgeBusy){
+   document.getElementById('prodstatus').textContent=
+      'MAIN сейчас получает план на вкладке приготовления. Дождитесь завершения.';
+   return;
+ }
+ const buttons=['prodRequestMainBtn','prodLatestMainBtn']
+   .map(id=>document.getElementById(id)).filter(Boolean);
+ productionMainBusy=true;buttons.forEach(btn=>btn.disabled=true);
+ const status=document.getElementById('prodstatus');
+ if(status)status.textContent='Ищу последний готовый Excel на сервере. Новое задание MAIN не создаётся…';
+ try{
+   const latest=await planGuestFetch('latest');
+   if(!latest?.available||!latest.download_url||!latest.job_id)
+     throw Error('На сервере нет последнего готового Excel. Нажмите «Получить новый файл с MAIN».');
+   const when=latest.finished_at?new Date(latest.finished_at)
+     .toLocaleString('ru-RU',{timeZone:'Europe/Moscow',hour12:false}):'время неизвестно';
+   if(status)status.textContent='Нашёл готовый Excel от '+when+
+     ' (Москва). Загружаю в перемещения без нового задания…';
+   const bytes=await productionMainDownload(latest.download_url,latest.job_id);
+   productionLoadIndependentBook(bytes,'Последний готовый план MAIN.xlsx');
+   if(status)status.textContent+=' Готовый Excel от '+when+
+     ' (Москва). Это последняя сохранённая версия на сервере, проверьте дату и лист.';
+ }catch(e){
+   if(status)status.textContent='Не удалось открыть последний готовый Excel: '+
+     String(e.message||e)+'. Новый запрос MAIN не создавался.';
+ }finally{
+   productionMainBusy=false;
+   buttons.forEach(btn=>btn.disabled=false);
  }
 }
 function productionPoint(name){
@@ -278,9 +318,19 @@ function productionSelectSheet(){
  const heads=productionRows[header];
  const pastry=productionFindPastry(productionRows,header+1);
  const pastryColumns=productionPastryColumns(productionRows,pastry.start,header,pastry.end);
- const options=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
+ const allReceivers=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
    .filter(x=>x.name&&x.col>=4&&x.point&&
       x.point!=='Бухара раздача'&&x.point!=='Мед экспресс');
+ const etmSources=allReceivers.filter(x=>x.point==='ЭТМ');
+ const options=allReceivers.filter(x=>x.point!=='ЭТМ');
+ if(etmSources.length){
+   // One visible selector controls both ETM DAY and NIGHT columns.
+   // The underlying values stay separate until summed per dish below.
+   const first=etmSources[0];
+   options.splice(allReceivers.indexOf(first),0,{
+     name:'ЭТМ',col:first.col,point:'ЭТМ',sources:etmSources
+   });
+ }
  const unknown=heads.map((v,col)=>({name:String(v??'').trim(),col}))
    .filter(x=>x.name&&x.col>=4&&!productionSkip.test(x.name)&&
       !productionPoint(x.name));
@@ -288,7 +338,8 @@ function productionSelectSheet(){
  const container=document.getElementById('prodrecipients');
  container.innerHTML=options.map(o=>
   '<div class="orgrow"><span><b>'+productionText(o.name)+'</b>'+
-  (o.point==='ЭТМ'?'<small>Объединяется в один документ ЭТМ</small>':'')+
+  (o.point==='ЭТМ'?'<small>ЭТМ день + ЭТМ ночь: '+(o.sources?.length||1)+
+    ' столбца, одно перемещение</small>':'')+
   '<small>Столбец '+(o.col+1)+'</small></span>'+
   '<select data-col="'+o.col+'" aria-label="Роль '+productionText(o.name)+'">'+
   '<option value="point" selected>Включить в перемещения</option>'+
@@ -344,10 +395,11 @@ function productionBuild(){
   if(context.pastryColumns?.needsReview)
    throw Error('Перед формированием подтвердите три колонки блока выпечки.');
   const selectors=[...document.querySelectorAll('#prodrecipients select')];
-  const columns=selectors.filter(x=>x.value==='point').map(x=>{
+  const columns=selectors.filter(x=>x.value==='point').flatMap(x=>{
     const col=Number(x.dataset.col);
-    const name=String(context.heads[col]??'').trim();
-    return {col,name,point:productionPoint(name)};
+    const selected=context.options.find(o=>o.col===col);
+    if(!selected)return [{col,name:String(context.heads[col]??'').trim(),point:null}];
+    return selected.sources||[{col:selected.col,name:selected.name,point:selected.point}];
   });
   // PK→BK must include all pastry minus PR, even if all destination
   // checkboxes are disabled (BR and external customers remain in total).
