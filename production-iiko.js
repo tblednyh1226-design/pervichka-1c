@@ -44,7 +44,13 @@ function productionLoadIndependentBook(bytes,name){
  // Prefer the same day as the morning plan, but NEVER reuse its bytes or worksheets.
  const morningSheet=typeof morningState!=='undefined'?morningState.result?.sheet:'';
  const matchedMorning=meta.SheetNames.indexOf(morningSheet);
- select.value=String(prior>=0?prior:matchedMorning>=0?matchedMorning:meta.SheetNames.length-1);
+ const preferred=prior>=0?prior:matchedMorning>=0?matchedMorning:-1;
+ const datedSheets=meta.SheetNames.map((name,i)=>({name,i}))
+   .filter(x=>productionSheetISO(x.name,productionMoscowToday()));
+ // Last tab may be a summary, so prefer an actual business-day sheet.
+ const chosen=preferred>=0&&productionSheetISO(meta.SheetNames[preferred],productionMoscowToday())?
+   preferred:datedSheets.length?datedSheets[datedSheets.length-1].i:meta.SheetNames.length-1;
+ select.value=String(chosen);
  productionSelectSheet();
  const status=document.getElementById('prodstatus');
  if(status)status.textContent='Отдельный план перемещений получен: '+name+
@@ -173,7 +179,7 @@ function productionPoint(name){
  if(/^этм(?: день| ночь)?$/.test(n))return 'ЭТМ';
  if(/^бестужевская$/.test(n))return 'Бестужевская';
  if(/^модул(?:ь)?$/.test(n))return 'Модуль';
- if(/^мега$/.test(n))return 'МЕГА';
+ if(/^мега$/.test(n))return 'МЕГА'; // Recognize for exclusion only.
  if(/^(редм|рэдмонд|редмонд)$/.test(n))return 'Рэдмонд';
  if(/^(мед экспресс|медэкспресс)$/.test(n))return 'Мед экспресс';
  return null;
@@ -295,6 +301,55 @@ function productionConfirmPastryColumns(){
  productionRenderPastryReview();
  document.getElementById('prodstatus').textContent='Колонки выпечки подтверждены. Можно формировать документы.';
 }
+// Sheet and iiko-document dates are always the same business day.
+function productionMoscowToday(){
+ const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',
+   year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+ const val=k=>parts.find(x=>x.type===k)?.value||'';
+ return val('year')+'-'+val('month')+'-'+val('day');
+}
+function productionSheetISO(sheet,referenceISO){
+ const match=/^\s*(0?[1-9]|[12]\d|3[01])\s*[.\/-]\s*(0?[1-9]|1[0-2])(?:\s*[.\/-]\s*(\d{2,4}))?(?!\d)/.exec(String(sheet||''));
+ if(!match)return '';
+ const day=Number(match[1]),month=Number(match[2]);
+ const reference=/^\d{4}-\d{2}-\d{2}$/.test(String(referenceISO||''))?
+   String(referenceISO):productionMoscowToday();
+ const refYear=Number(reference.slice(0,4));
+ const explicitYear=match[3]?Number(match[3]):null;
+ const years=explicitYear===null?[refYear-1,refYear,refYear+1]:
+   [explicitYear<100?2000+explicitYear:explicitYear];
+ const candidates=years.map(year=>{
+   const d=new Date(Date.UTC(year,month-1,day));
+   return d.getUTCFullYear()===year&&d.getUTCMonth()+1===month&&d.getUTCDate()===day?
+     d.toISOString().slice(0,10):'';
+ }).filter(Boolean);
+ const refTime=Date.parse(reference+'T12:00:00Z');
+ candidates.sort((a,b)=>Math.abs(Date.parse(a+'T12:00:00Z')-refTime)-
+   Math.abs(Date.parse(b+'T12:00:00Z')-refTime));
+ return candidates[0]||'';
+}
+function productionSyncTransferDate(){
+ const field=document.getElementById('prodDocDate');
+ if(!field)return;
+ field.value=productionSheetISO(productionSheetName,field.value||productionMoscowToday());
+ if(typeof transferRefreshSendButtons==='function')transferRefreshSendButtons();
+}
+function productionSelectDate(){
+ const field=document.getElementById('prodDocDate');
+ const select=document.getElementById('prodsheet');
+ if(!field||!select||!productionBook)return;
+ const chosen=String(field.value||'');
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(chosen)){productionSyncTransferDate();return}
+ const index=productionBook.SheetNames.findIndex(name=>productionSheetISO(name,chosen)===chosen);
+ if(index<0){
+   productionSyncTransferDate();
+   productionError(Error('В загруженном Excel нет листа за '+chosen+
+     '. Дата документов восстановлена по выбранному дню.'));
+   return;
+ }
+ select.value=String(index);
+ productionSelectSheet();
+}
 function productionSelectSheet(){
  if(!productionBook)return;
  const i=Number(document.getElementById('prodsheet').value);
@@ -320,7 +375,7 @@ function productionSelectSheet(){
  const pastryColumns=productionPastryColumns(productionRows,pastry.start,header,pastry.end);
  const allReceivers=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
    .filter(x=>x.name&&x.col>=4&&x.point&&
-      x.point!=='Бухара раздача'&&x.point!=='Мед экспресс');
+      x.point!=='Бухара раздача'&&x.point!=='Мед экспресс'&&x.point!=='МЕГА');
  const etmSources=allReceivers.filter(x=>x.point==='ЭТМ');
  const options=allReceivers.filter(x=>x.point!=='ЭТМ');
  if(etmSources.length){
@@ -336,7 +391,9 @@ function productionSelectSheet(){
       !productionPoint(x.name));
  window.productionContext={header,heads,options,pastry,pastryColumns,unknown};
  const container=document.getElementById('prodrecipients');
- container.innerHTML=options.map(o=>
+ container.innerHTML='<div class="orgrow"><span><b>ПК → БК · Правда кухня → Бухара кухня</b>'+
+  '<small>Автоматически: выпечка «Всего» минус «Раздача Правды»</small></span>'+
+  '<strong>Автоматический маршрут</strong></div>'+options.map(o=>
   '<div class="orgrow"><span><b>'+productionText(o.name)+'</b>'+
   (o.point==='ЭТМ'?'<small>ЭТМ день + ЭТМ ночь: '+(o.sources?.length||1)+
     ' столбца, одно перемещение</small>':'')+
@@ -354,7 +411,7 @@ function productionSelectSheet(){
   'Маршруты: ПК→БК (вся выпечка кроме ПР), БК→БР (только выпечка), БК→остальные точки. ПК→ПР не создаётся.')+
   (unknown.length?' Есть нераспознанные колонки: '+unknown.map(x=>x.name).join(', ')+'.':'');
  productionRenderPastryReview();
- if(typeof transferRowDate==='function')transferRowDate();
+ productionSyncTransferDate();
 }
 function productionPastryReceiverColumn(target,context){
  const cols=context.pastryColumns;
@@ -403,8 +460,8 @@ function productionBuild(){
   });
   // PK→BK must include all pastry minus PR, even if all destination
   // checkboxes are disabled (BR and external customers remain in total).
-  if(columns.some(x=>!x.point||x.point==='Бухара раздача'||x.point==='Мед экспресс'))
-   throw Error('БР и Мед экспресс не выбираются как обычные получатели перемещений');
+  if(columns.some(x=>!x.point||['Бухара раздача','Мед экспресс','МЕГА'].includes(x.point)))
+   throw Error('БР, Мед экспресс и МЕГА не выбираются как обычные получатели перемещений');
   const warnings=[],missingCodes=[],invalidValues=[];
   if(context.unknown.length)
    warnings.push('Неизвестные колонки не обрабатываются: '+
