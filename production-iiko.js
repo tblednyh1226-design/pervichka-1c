@@ -459,6 +459,9 @@ function productionPastryReceiverColumn(target,context){
  throw Error('В блоке выпечки не определена колонка точки «'+target.name+
    '». Проверьте отдельную строку заголовков в Excel.');
 }
+function productionBlankQuantity(v){
+ return v===null||v===undefined||/^(?:\s*|[-—–])$/.test(String(v).trim());
+}
 function productionQuantity(v){
  if(typeof v==='number')return Number.isFinite(v)?v:null;
  const raw=String(v??'').trim().replace(/\s/g,'').replace(',','.');
@@ -516,7 +519,7 @@ function productionBuild(){
       quantity:finalAmount,sourceRow:entry.sourceRow,sourceRows:[entry.sourceRow],
       ...(conversionFactor===8?{sourceQuantity:amount,conversionFactor:8,quantityUnit:'кус.'}:{})});
   }
-  let inputLines=0,excludedBRRegular=0,brPastryMoved=0,excludedPRPastry=0,etmDay=0,etmNight=0;
+  let inputLines=0,excludedBRRegular=0,brPastryMoved=0,excludedPRPastry=0,etmDay=0,etmNight=0,emptyPastrySkipped=0;
   for(let i=context.header+1;i<context.pastry.end;i++){
    // Ignore every row after compotes and before the pastry heading.
    // None of these extras may enter quantity checks or iiko mappings.
@@ -525,15 +528,31 @@ function productionBuild(){
    const name=String(row[1]??'').trim();
    if(!name||productionNorm(name)==='наименование'||productionGroups.test(name))continue;
    const marker=productionNorm(row[0]);
-   if(marker==='выпечка'||productionGroups.test(marker)||marker==='меню'||marker==='№')continue;
+   if(productionSkip.test(name)||marker==='выпечка'||productionGroups.test(marker)||marker==='меню'||marker==='№')continue;
    const isPastry=i>context.pastry.start;
+   if(isPastry){
+     // Blank future-day pastry lines and section notes have nothing to move.
+     // A positive number ANYWHERE in the relevant columns keeps strict validation.
+     const cols=context.pastryColumns;
+     const relevant=[...columns.map(t=>productionPastryReceiverColumn(t,context)),
+       cols.totalCol,cols.prCol,cols.brCol];
+     const hasPositive=[...new Set(relevant)].some(c=>productionQuantity(row[c])>0);
+     const rawTotal=row[cols.totalCol];
+     if(!hasPositive&&productionQuantity(rawTotal)===null){
+       emptyPastrySkipped++;
+       if(!productionBlankQuantity(rawTotal))
+         warnings.push('Строка '+(i+1)+' «'+name+
+          '»: нет положительных количеств, «Всего» нечисловое — пропущена');
+       continue;
+     }
+   }
    const entry={code:String(row[0]??'').trim(),name,
       weight:String(row[2]??'').trim(),sourceRow:i+1};
    let quantities=new Map();
    for(const target of columns){
      const targetCol=isPastry?productionPastryReceiverColumn(target,context):target.col;
      const raw=row[targetCol],count=productionQuantity(raw);
-     if(raw!==null&&raw!==undefined&&String(raw).trim()!==''&&count===null){
+     if(!productionBlankQuantity(raw)&&count===null){
        invalidValues.push('Строка '+(i+1)+': '+target.name+
          ' — нечисловое количество «'+String(raw).slice(0,45)+'»');
      }
@@ -551,7 +570,7 @@ function productionBuild(){
      context.heads.findIndex(x=>productionPoint(x)==='Бухара раздача');
    const rawBr=brCol>=0?row[brCol]:'';
    const brQuantity=productionQuantity(rawBr);
-   if(rawBr!==null&&rawBr!==undefined&&String(rawBr).trim()!==''&&brQuantity===null)
+   if(!productionBlankQuantity(rawBr)&&brQuantity===null)
      throw Error('Строка '+(i+1)+': некорректное количество БР');
    if(!isPastry&&brQuantity>0)excludedBRRegular+=brQuantity;
    let pastryUpstream=0;
@@ -559,8 +578,11 @@ function productionBuild(){
      const rawTotal=row[context.pastryColumns.totalCol];
      const rawPr=row[context.pastryColumns.prCol];
      const total=productionQuantity(rawTotal),pr=productionQuantity(rawPr);
-     if(total===null||pr===null && String(rawPr??'').trim()!=='')
-       throw Error('Строка '+(i+1)+': нечисловое количество в «Всего» или «Раздача Правды» для выпечки');
+     if(total===null||pr===null&&!productionBlankQuantity(rawPr))
+       throw Error('Строка '+(i+1)+' «'+name+'»: некорректное количество выпечки. '+
+         'Всего ('+productionLetter(context.pastryColumns.totalCol)+'): «'+String(rawTotal??'').slice(0,35)+
+         '», Раздача Правды ('+productionLetter(context.pastryColumns.prCol)+'): «'+
+         String(rawPr??'').slice(0,35)+'». Есть положительные количества — пропускать нельзя.');
      const prCount=pr||0;
      pastryUpstream=total-prCount;
      if(pastryUpstream<0)
@@ -622,6 +644,7 @@ function productionBuild(){
   const converted=productionDocuments.flatMap(d=>d.items).filter(x=>x.conversionFactor===8);
   document.getElementById('prodstatus').textContent=
     'Автоматически сформировано '+productionDocuments.length+' перемещений за '+productionSheetName+
+    '. Пропущено незапланированных строк выпечки: '+emptyPastrySkipped+
     '. Крупные пироги: '+(converted.length?
       converted.length+' строк переведено в куски (×8).':'нет позиций для пересчёта ×8.')+
     redmondNote+' Откройте документы и проверьте блюда, количества и склады до отправки в iiko.';
