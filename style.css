@@ -29,3 +29,18 @@ body.guest-mode .context,body.guest-mode .headright{display:none!important}
 .iiko-mapping-choice,.iiko-mapping-choice>div{display:grid;gap:8px;min-width:0}
 .iiko-mapping-choice input,.iiko-mapping-choice select{display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;font-size:16px}
 .iiko-mapping-choice button{justify-self:start;max-width:100%;white-space:normal}
+
+/* Production iiko has two isolated workflows. Switching tabs preserves their state. */
+.production-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 16px;padding:4px;background:#f2f4f7;border:1px solid #eaecf0;border-radius:13px}
+.production-tabs .production-tab{flex:1 1 180px;border:1px solid transparent;border-radius:10px;background:transparent;padding:13px 16px;color:#475467;font-weight:700;cursor:pointer;font-size:15px;min-height:46px}
+.production-tabs .production-tab.active{background:#fff;color:#155eef;border-color:#d0d5dd;box-shadow:0 1px 3px #10182818}
+.production-tabs .production-tab:focus-visible{outline:3px solid #84adff;outline-offset:2px}
+#productionPanelCooking,#productionPanelTransfers{min-width:0}
+.transfer-steps{padding-left:23px;line-height:1.55;margin:12px 0}
+.transfer-steps li{padding:6px 0;overflow-wrap:anywhere}
+#productionPanelTransfers .scope{margin:16px 0}
+#productionPanelTransfers #prodresult{margin-top:16px}
+@media(max-width:650px){
+ .production-tabs{gap:4px;padding:3px}
+ .production-tabs .production-tab{flex:1 1 0;min-width:0;font-size:14px;padding:11px 8px}
+}
