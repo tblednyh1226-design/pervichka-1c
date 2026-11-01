@@ -201,7 +201,11 @@ function productionPoint(name){
  if(/^бестужевская$/.test(n))return 'Бестужевская';
  if(/^модул(?:ь)?$/.test(n))return 'Модуль';
  if(/^мега$/.test(n))return 'МЕГА'; // Recognize for exclusion only.
- if(/^(редм|рэдмонд|редмонд)$/.test(n))return 'Рэдмонд';
+ // "Рэдм" is how this outlet is abbreviated in the production sheet.
+ // Accept either е or э, full names, punctuation and optional qualifiers.
+ if(/^р[еэ]дм(?:онд|онт)?(?:$|[.\s(№_:—-])/u.test(n)||
+    /^(?:точка|кафе|столовая)\s+р[еэ]дм(?:онд|онт)?(?:$|[.\s(№_:—-])/u.test(n))
+   return 'Рэдмонд';
  if(/^(мед экспресс|медэкспресс)$/.test(n))return 'Мед экспресс';
  return null;
 }
@@ -479,6 +483,10 @@ function productionBuild(){
   // ПК→БК: pastry «Всего» minus ПР, regardless of outlet selection.
   if(columns.some(x=>!x.point||['Бухара раздача','Мед экспресс','МЕГА'].includes(x.point)))
    throw Error('БР, Мед экспресс и МЕГА не выбираются как обычные получатели перемещений');
+  const redmondHeader=context.heads.map((v,col)=>({col,name:String(v??'').trim()}))
+    .find(x=>x.col>=4&&productionPoint(x.name)==='Рэдмонд');
+  if(redmondHeader&&!context.options.some(x=>x.point==='Рэдмонд'))
+    throw Error('Столбец Рэдмонд найден в плане, но отсутствует среди получателей.');
   const warnings=[],missingCodes=[],invalidValues=[];
   if(context.unknown.length)
    warnings.push('Неизвестные колонки не обрабатываются: '+
@@ -606,12 +614,17 @@ function productionBuild(){
     notes.textContent='Требует проверки: '+warningsAll.slice(0,30).join('; ');
     result.appendChild(notes);
   }
+  const redmondIncluded=context.options.some(x=>x.point==='Рэдмонд');
+  const redmondMade=productionDocuments.some(d=>d.target==='Рэдмонд');
+  const redmondNote=redmondIncluded?
+    ' Рэдмонд: найден в плане'+(redmondMade?', перемещение сформировано.':', нет положительных количеств.') :
+    ' Рэдмонд: колонка не найдена в заголовках Excel.';
   const converted=productionDocuments.flatMap(d=>d.items).filter(x=>x.conversionFactor===8);
   document.getElementById('prodstatus').textContent=
     'Автоматически сформировано '+productionDocuments.length+' перемещений за '+productionSheetName+
     '. Крупные пироги: '+(converted.length?
       converted.length+' строк переведено в куски (×8).':'нет позиций для пересчёта ×8.')+
-    ' Откройте документы и проверьте блюда, количества и склады до отправки в iiko.';
+    redmondNote+' Откройте документы и проверьте блюда, количества и склады до отправки в iiko.';
   // Catalogue read only. Sending iiko documents remains manual.
   if(typeof transferConnect==='function'&&typeof planGuestStored==='function'&&
      planGuestStored()?.token&&typeof transferLive!=='undefined'&&
