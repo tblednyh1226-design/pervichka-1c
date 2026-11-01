@@ -156,9 +156,11 @@ function productionPastryColumns(rows,pastryStart){
     .filter(x=>x.value==='всего');
   const pr=header.map((value,col)=>({value:productionPoint(value),col}))
     .filter(x=>x.value==='Правда раздача');
-  if(totals.length!==1||pr.length!==1)
-   throw Error('В блоке выпечки должна быть ровно одна колонка «Всего» и одна «Раздача Правды».');
-  return {totalCol:totals[0].col,prCol:pr[0].col,headerRow:i};
+  const br=header.map((value,col)=>({value:productionPoint(value),col}))
+    .filter(x=>x.value==='Бухара раздача');
+  if(totals.length!==1||pr.length!==1||br.length!==1)
+   throw Error('В блоке выпечки должны быть отдельные колонки «Всего», «Раздача Правды» и «Раздача Бухара».');
+  return {totalCol:totals[0].col,prCol:pr[0].col,brCol:br[0].col,headerRow:i};
  }
  throw Error('Не найдена отдельная строка заголовков выпечки с колонками «Всего» и «Раздача Правды».');
 }
@@ -204,7 +206,7 @@ function productionSelectSheet(){
  const result=document.getElementById('prodresult');
  if(result){result.innerHTML='';result.hidden=true}
  document.getElementById('prodstatus').textContent=
-  'Лист: '+productionSheetName+'. Отправители заданы маршрутом: ПК→БК (выпечка), ПК→ПР (выпечка ПР), БК→точки. БР исключена.'+
+  'Лист: '+productionSheetName+'. Маршруты: ПК→БК (вся выпечка кроме ПР), БК→БР (только выпечка), БК→остальные точки. ПК→ПР не создаётся.'+
   (unknown.length?' Есть нераспознанные колонки: '+unknown.map(x=>x.name).join(', ')+'.':'');
 }
 function productionQuantity(v){
@@ -252,7 +254,7 @@ function productionBuild(){
    }else items.set(key,{code:entry.code,name:entry.name,weight:entry.weight,
       quantity:amount,sourceRow:entry.sourceRow,sourceRows:[entry.sourceRow]});
   }
-  let inputLines=0,excludedBR=0,brPastryInBK=0,excludedPRPastry=0,etmDay=0,etmNight=0;
+  let inputLines=0,excludedBRRegular=0,brPastryMoved=0,excludedPRPastry=0,etmDay=0,etmNight=0;
   for(let i=context.header+1;i<context.pastry.end;i++){
    const row=productionRows[i]||[];
    const name=String(row[1]??'').trim();
@@ -277,10 +279,15 @@ function productionBuild(){
        }
      }
    }
-   // BR must never enter transfer documents, even when its own column has values.
-   const brCol=context.heads.findIndex(x=>productionPoint(x)==='Бухара раздача');
-   const brQuantity=brCol>=0?productionQuantity(row[brCol]):null;
-   if(brQuantity>0)excludedBR+=brQuantity;
+   // Ordinary dishes for BR are excluded; ONLY pastry produces a BK→BR transfer.
+   // Use each section's own BR header: the pastry header may have a different layout.
+   const brCol=isPastry?context.pastryColumns.brCol:
+     context.heads.findIndex(x=>productionPoint(x)==='Бухара раздача');
+   const rawBr=brCol>=0?row[brCol]:'';
+   const brQuantity=productionQuantity(rawBr);
+   if(rawBr!==null&&rawBr!==undefined&&String(rawBr).trim()!==''&&brQuantity===null)
+     throw Error('Строка '+(i+1)+': некорректное количество БР');
+   if(!isPastry&&brQuantity>0)excludedBRRegular+=brQuantity;
    let pastryUpstream=0;
    if(isPastry){
      const rawTotal=row[context.pastryColumns.totalCol];
@@ -293,8 +300,9 @@ function productionBuild(){
      if(pastryUpstream<0)
        throw Error('Строка '+(i+1)+': выпечки для ПР больше, чем общее количество');
      excludedPRPastry+=prCount;
-     const br=brCol>=0?productionQuantity(row[brCol]):null;
-     if(br>0)brPastryInBK+=br;
+     if(brQuantity>pastryUpstream)
+       throw Error('Строка '+(i+1)+': выпечки БР больше, чем «Всего» минус ПР');
+     if(brQuantity>0)brPastryMoved+=brQuantity;
    }
    if(!quantities.size&&!pastryUpstream)continue;
    if(!/^\d+$/.test(entry.code))
@@ -306,10 +314,12 @@ function productionBuild(){
      add('Бухара кухня',point,entry,count);
      inputLines++;
    }
-   // Every saved pastry unit except PR enters BK: BR and external customers
-   // also count, although no BK→BR or BK→customer documents are created.
+   // All pastry except PR is received by BK. Of that amount, BR receives
+   // only its own pastry via BK→BR; ordinary BR dishes remain excluded.
    if(isPastry&&pastryUpstream>0)
      add('Правда кухня','Бухара кухня',entry,pastryUpstream);
+   if(isPastry&&brQuantity>0)
+     add('Бухара кухня','Бухара раздача',entry,brQuantity);
   }
   if(invalidValues.length)
     throw Error('В плане есть некорректные количества: '+invalidValues.slice(0,7).join('; ')+
@@ -338,19 +348,20 @@ function productionBuild(){
   }).join('');
   result.innerHTML='<h3>Черновики перемещений · '+escaped(productionSheetName)+'</h3>'+
     '<p>Документов: <b>'+productionDocuments.length+'</b>. Порядок: '+
-    '<b>ПК→БК</b> (вся выпечка минус ПР), затем <b>БК→точки</b>. '+
-    'ПК→ПР не формируется.</p>'+
+    '<b>ПК→БК</b> (вся выпечка минус ПР), затем <b>БК→БР</b> (только выпечка) '+
+    'и <b>БК→остальные точки</b>. ПК→ПР не формируется.</p>'+
     '<p>ЭТМ день: <b>'+etmDay+'</b>; ЭТМ ночь: <b>'+etmNight+
-      '</b>. Объединены в один склад ЭТМ. БР: <b>'+excludedBR+
-      '</b> единиц без перемещения БК→БР, из них выпечка <b>'+brPastryInBK+
-      '</b> включена в ПК→БК. Выпечка ПР <b>'+excludedPRPastry+
+      '</b>. Объединены в один склад ЭТМ. БК→БР: <b>'+brPastryMoved+
+      '</b> единиц только выпечки (предварительно включены в ПК→БК). '+
+      'Остальные блюда БР: <b>'+excludedBRRegular+
+      '</b> единиц без перемещения. Выпечка ПР <b>'+excludedPRPastry+
       '</b> единиц полностью исключена из перемещений.</p>'+
     (warnings.length||missingCodes.length?
      '<p style="color:#9d4b17"><b>Проверить:</b> '+
        [...warnings,...missingCodes].slice(0,40).map(escaped).join('; ')+'</p>':
      '<p>Нераспознанных колонок и строк без кода среди перемещений не обнаружено.</p>')+
     cards+
-    '<p class="muted">Черновики для проверки. Выпечка ПК→БК рассчитывается по колонке «Всего» минус ПР. Для больших пирогов перевод в куски ещё не применяется к перемещениям. '+
+    '<p class="muted">Черновики для проверки. ПК→БК: выпечка «Всего» минус ПР; БК→БР: выпечка из собственной колонки БР. Для больших пирогов перевод в куски ещё не применяется к перемещениям. '+
     'Номенклатуру и склады требуется сверить с iiko. Никакой выгрузки или проведения.</p>'+
     '<button onclick="productionExport()">Скачать черновики перемещений (JSON)</button>';
   result.hidden=false;
