@@ -182,7 +182,7 @@ function exportXlsx(doc){
 function drawJournal(){
  const status=$('statusFilter').value,from=$('dateFrom').value,to=$('dateTo').value;
  const data=journalData.filter(d=>(!status||d.status===status)&&(!from||d.doc_date>=from)&&(!to||d.doc_date<=to));
- $('journalCount').textContent='Показано документов: '+data.length+(journalData.length===100?' (последние 100; уточните даты для поиска)':'');
+ $('journalCount').textContent='Показано документов: '+data.length+(journalData.length===100?' (первые 100; уточните диапазон дат)':'');
  if(!data.length){$('journal').innerHTML='<p class="empty">По выбранным условиям списаний нет.</p>';return}
  $('journal').innerHTML=data.map(d=>{
   const sent=d.status==='submitted',rows=Array.isArray(d.items)?d.items:[];
@@ -200,7 +200,11 @@ function drawJournal(){
 }
 async function loadJournal(){
  if(!orgId)return;
- const r=await sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,items,status,created_by,created_at,updated_at,submitted_at').eq('organization_id',orgId).order('doc_date',{ascending:false}).order('created_at',{ascending:false}).limit(100);
+ let query=sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,items,status,created_by,created_at,updated_at,submitted_at').eq('organization_id',orgId);
+ if($('statusFilter').value)query=query.eq('status',$('statusFilter').value);
+ if($('dateFrom').value)query=query.gte('doc_date',$('dateFrom').value);
+ if($('dateTo').value)query=query.lte('doc_date',$('dateTo').value);
+ const r=await query.order('doc_date',{ascending:false}).order('created_at',{ascending:false}).limit(100);
  if(r.error)throw r.error;
  journalData=r.data||[];drawJournal();
 }
@@ -284,6 +288,6 @@ $('saveBtn').addEventListener('click',saveDraft);
 $('submitBtn').addEventListener('click',submit);
 $('excelBtn').addEventListener('click',()=>exportXlsx());
 $('reloadBtn').addEventListener('click',()=>loadJournal().catch(e=>say('Ошибка журнала: '+e.message,'error')));
-for(const id of ['statusFilter','dateFrom','dateTo'])$(id).addEventListener('change',drawJournal);
+for(const id of ['statusFilter','dateFrom','dateTo'])$(id).addEventListener('change',()=>loadJournal().catch(e=>say('Ошибка журнала: '+e.message,'error')));
 $('journal').addEventListener('click',onJournalClick);
 init();
