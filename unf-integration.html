@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>Колхоз · Интеграция 1С — Помогатор</title>
+<link rel="stylesheet" href="style.css?v=20261101-unf1">
+<style>
+main{max-width:1150px} .panel{background:white;border:1px solid #e0e5ed;border-radius:14px;padding:20px;margin:16px 0}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.statuspanel{border:1px solid #d7e1ee;border-radius:10px;padding:13px;background:#f8fafc;overflow-wrap:anywhere}
+.statuspanel strong{display:block;margin-bottom:6px}.mutedline{color:#61718a;font-size:13px;line-height:1.6}
+.actionbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
+.actionbar button{padding:11px 16px}
+#diagnostics{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.7}
+.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;min-width:620px}th,td{border-bottom:1px solid #e2e7ee;padding:9px;text-align:left}
+.tag{background:#edf3fd;color:#1e5288;padding:4px 8px;border-radius:6px;font-size:12px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f8fb;padding:12px;border-radius:10px}
+code{font-size:13px}button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:720px){.grid3{grid-template-columns:1fr}.panel{padding:14px}}
+</style></head>
+<body>
+<header><div><b>Помогатор · Колхоз</b><small>Интеграция с 1С:УНФ Общепит</small></div><div class="headright"><a href="./index.html">← На главную</a></div></header>
+<main>
+<h1>Подключение к 1С:УНФ</h1>
+<p class="lead">Подключение через защищённый сервер Помогатора. На этом этапе доступно только чтение — никакие документы в 1С не создаются и не проводятся.</p>
+<div class="panel">
+<h2>Состояние подключения</h2>
+<div class="grid3">
+<div class="statuspanel"><strong>Организация</strong><span id="orgStatus" class="mutedline">Определяю…</span></div>
+<div class="statuspanel"><strong>Реквизиты API</strong><span id="setupStatus" class="mutedline">Не проверены</span></div>
+<div class="statuspanel"><strong>Соединение с сервером</strong><span id="connectionStatus" class="mutedline">Не проверено</span></div>
+</div>
+<div class="actionbar"><button id="statusBtn" onclick="unfStatus()">Проверить настройки</button><button id="probeBtn" class="primary" onclick="unfProbe()" disabled>Проверить соединение с 1С</button><button onclick="unfClear()">Очистить результат</button></div>
+<div id="diagnostics" class="mutedline" role="status">Войдите в Помогатор. Для проверки потребуется опубликованный HTTPS API на сервере 1С.</div>
+</div>
+<div class="panel">
+<h2>Доступные документы 1С</h2>
+<p class="mutedline">После успешной проверки покажем реальные имена документов, опубликованных в вашей конфигурации. Названия объектов могут отличаться от экранных названий в УНФ.</p>
+<div id="entities" class="mutedline">Пока не подключено.</div>
+<div class="actionbar">
+<label>Проверка выбранного типа документа
+<select id="documentEntity" disabled><option value="">Сначала проверьте соединение</option></select></label>
+<button id="sampleBtn" onclick="unfSample()" disabled>Получить 15 заголовков документов</button>
+</div>
+<div id="sample" class="tablewrap mutedline"></div>
+</div>
+<div class="panel">
+<h2>План сводного выпуска за день</h2>
+<p>После определения структуры документов добавим подбор расходных накладных за дату, предварительный расчёт общего выпуска и контроль повторного включения накладных.</p>
+<div class="grid3">
+<label>Дата документа<input id="productionDate" type="date"></label>
+<label>Склад<select id="productionWarehouse"><option>Кулинария</option><option>Кондитерский цех</option></select></label>
+<label>Режим<select disabled><option>Только предварительный просмотр</option></select></label>
+</div>
+<p class="mutedline">Формирование общего выпуска пока заблокировано. Сначала нужно подтвердить соответствие объектов 1С и расчёт рецептур.</p>
+<div class="actionbar"><button disabled>Подобрать расходные накладные</button><button disabled>Создать выпуск в 1С</button></div>
+</div>
+<div class="panel">
+<h2>Что требуется от сервера 1С</h2>
+<p class="mutedline">Если база опубликована в веб-сервере IIS/Apache, включается стандартный интерфейс OData. Понадобятся внешний HTTPS-адрес с окончанием <code>/odata/standard.odata/</code> и отдельный пользователь 1С только с правами чтения нужных объектов. Реквизиты хранятся в секретах серверной части Supabase, а не в браузере и не в GitHub.</p>
+<p class="mutedline">Если у базы нет защищённой публикации наружу, предпочтительнее локальный агент на вашем сервере, который сам устанавливает исходящее соединение. Открывать 1С в интернет без защиты не нужно.</p>
+</div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
+<script src="unf-integration.js?v=20261101-integration1"></script>
+</body></html>
