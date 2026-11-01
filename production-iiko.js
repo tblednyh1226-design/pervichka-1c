@@ -62,12 +62,13 @@ function productionLoadIndependentBook(bytes,name){
    '» не подошёл: '+error+'. Выберите другой день без повторного запроса.';
  else if(status){
   const needsReview=Boolean(window.productionContext?.pastryColumns?.needsReview);
-  status.textContent='Отдельный план перемещений получен: '+name+
+  if(productionDocuments.length||needsReview)status.textContent='Отдельный план перемещений получен: '+name+
    '. Лист: '+productionSheetName+'. '+
    (needsReview?'Подтвердите колонки выпечки перед формированием.':
      productionDocuments.length?'Сформировано '+productionDocuments.length+' перемещений для проверки.':
      'Документы не сформированы: проверьте ошибку и лист.')+
    ' Утренний план не изменён.';
+  // If automatic generation failed, do not overwrite its precise error.
  }
 }
 async function productionOpen(){
