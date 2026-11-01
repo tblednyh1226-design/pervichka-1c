@@ -175,6 +175,31 @@ function iikoDraftFilterChoices(index){
     all?'По запросу ничего не найдено. Уточните название или артикул.':
     'Среди блюд и заготовок совпадений нет. Измените запрос или включите «Все типы».';
 }
+// Unified persistent mapping write for both cooking and transfer tabs.
+// Persist only after an explicit choice and successful MAIN acknowledgement.
+async function iikoDraftSaveMapping(sourceName,product){
+ const key=iikoDraftSourceKey(sourceName);
+ if(!key||key.length>300)throw Error('Некорректное название блюда для сопоставления');
+ if(!product?.id)throw Error('У выбранной номенклатуры iiko отсутствует ID');
+ const device=typeof planGuestStored==='function'?planGuestStored():null;
+ if(!device?.deviceId||!device?.token)
+   throw Error('Сначала подключите MAIN, чтобы запоминать соответствия на всех устройствах');
+ if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==device.deviceId)
+   await iikoDraftLoadMappings();
+ if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==device.deviceId)
+   throw Error(iikoDraftState.mappingError||'Общий справочник MAIN ещё не загружен');
+ const row={source_key:key,target_name:product.name,target_id:product.id,
+   target_article:product.article||''};
+ await planGuestFetch('iiko_map_save',row);
+ if(planGuestStored().deviceId!==device.deviceId)
+   throw Error('Привязка к MAIN изменилась во время сохранения. Повторно проверьте соответствия.');
+ iikoDraftState.mappings.set(key,row);
+ iikoDraftRenderSaved();
+ iikoDraftAutoCheck();
+ if(typeof transferRender==='function'&&typeof productionDocuments!=='undefined'&&productionDocuments.length)
+   transferRender();
+ return row;
+}
 async function iikoDraftSaveChoice(index){
   const issue=iikoDraftState.mismatches[index];
   const select=document.getElementById('iikoDraftChoose-'+index);
@@ -185,30 +210,14 @@ async function iikoDraftSaveChoice(index){
     if(status)status.textContent='Выберите конкретную позицию iiko из списка.';
     return;
   }
-  const key=iikoDraftSourceKey(issue.name);
-  if(!key||key.length>300){if(status)status.textContent='Название для сопоставления некорректно.';return}
-  const pair=typeof planGuestStored==='function'?planGuestStored():null;
-  if(!pair?.deviceId||!pair?.token){
-    if(status)status.textContent='Чтобы запомнить выбор на всех устройствах, сначала подключите MAIN.';
-    return;
-  }
-  if(!iikoDraftState.mappingLoaded||iikoDraftState.mappingDevice!==pair.deviceId){
-    if(status)status.textContent='Общий справочник соответствий для этого MAIN ещё не загружен.';
-    return;
-  }
   if(product.type&&!['DISH','PREPARED'].includes(product.type)){
-    if(!window.confirm('Вы выбрали позицию типа '+product.type+' — это не готовое блюдо/заготовка. Сохранить такое соответствие?'))return;
+    if(!window.confirm('Вы выбрали позицию типа '+product.type+
+      ' — это не готовое блюдо/заготовка. Сохранить соответствие?'))return;
   }
-  if(status)status.textContent='Сохраняю соответствие в общем справочнике…';
+  if(status)status.textContent='Сохраняю соответствие в общем справочнике MAIN…';
   try{
-    await planGuestFetch('iiko_map_save',{
-      source_key:key,target_name:product.name,target_id:product.id||'',target_article:product.article||''
-    });
-    iikoDraftState.mappings.set(key,{source_key:key,target_name:product.name,
-      target_id:product.id||'',target_article:product.article||''});
-    iikoDraftRenderSaved();
-    iikoDraftCheck();
-    if(typeof transferRender==='function'&&typeof productionDocuments!=='undefined'&&productionDocuments.length)transferRender();
+    await iikoDraftSaveMapping(issue.name,product);
+    if(status)status.textContent='Соответствие сохранено и применяется к обоим видам документов.';
   }catch(e){
     if(status)status.textContent='Не удалось сохранить соответствие: '+String(e.message||e);
   }
@@ -248,10 +257,12 @@ function iikoDraftResolveProduct(item){
   const saved=iikoDraftState.mappings.get(key);
   if(saved){
     // A non-food type is permitted only when the user previously confirmed it.
-    const matches=catalog.filter(p=>saved.target_id?
-      String(p.id)===String(saved.target_id):
-      saved.target_article&&String(p.article)===String(saved.target_article));
-    const unique=new Map(matches.map(p=>[String(p.id||p.article),p]));
+    // IDs can change after iiko catalogue recreation. The saved article is
+    // a safe fallback only when it uniquely identifies the replacement item.
+    const byId=saved.target_id?catalog.filter(p=>String(p.id)===String(saved.target_id)):[];
+    const byArticle=!byId.length&&saved.target_article?
+      catalog.filter(p=>String(p.article||'')===String(saved.target_article)):[];
+    const unique=new Map((byId.length?byId:byArticle).map(p=>[String(p.id||p.article),p]));
     if(unique.size===1)return {product:[...unique.values()][0],source:'saved'};
     return {error:'Сохранённое соответствие отсутствует или неоднозначно в текущем справочнике iiko'};
   }
