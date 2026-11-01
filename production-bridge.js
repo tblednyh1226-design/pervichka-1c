@@ -214,91 +214,95 @@ async function planGuestDownloadExcel(url,jobId,statusCallback){
  if(!jobId)throw Error('MAIN не указал номер задания для получения Excel.');
  const status=typeof statusCallback==='function'?statusCallback:()=>{};
  if(planGuestExcelCache.has(jobId)){
-   const stored=planGuestExcelCache.get(jobId);
-   status('Готовый Excel уже загружен в этом сеансе. Открываю сохранённую копию…');
-   return stored.slice(0);
+   status('Excel уже загружен: открываю файл из памяти браузера…');
+   return planGuestExcelCache.get(jobId).slice(0);
  }
  if(planGuestExcelInflight.has(jobId)){
-   status('Файл уже скачивается в другой вкладке Помогатора. Использую то же скачивание…');
-   const existing=await planGuestExcelInflight.get(jobId);
-   return existing.slice(0);
+   status('Excel уже скачивается, использую тот же запрос…');
+   return (await planGuestExcelInflight.get(jobId)).slice(0);
  }
- const task=(async()=>{
-   const initial=planGuestVerifiedExcelUrl(url);
-   const controllers={direct:new AbortController(),relay:new AbortController()};
-   let winner='',directErr='',relayErr='';
+ const download=(async()=>{
+   const controllers={primary:new AbortController(),relay:new AbortController(),storage:new AbortController()};
+   let winner='',errors={};
    const accept=(route,buffer)=>{
-     const valid=planGuestValidateExcel(buffer);
+     const bytes=planGuestValidateExcel(buffer);
      if(!winner){
        winner=route;
-       controllers[route==='direct'?'relay':'direct'].abort();
-       status('Готовый Excel получен: '+(valid.byteLength/1048576).toFixed(1)+
-         ' МБ, '+(route==='direct'?'напрямую из хранилища':'через резервный сервер')+'.');
+       for(const name of Object.keys(controllers))
+         if(name!==route)controllers[name].abort();
+       status('Excel получен ('+(bytes.byteLength/1048576).toFixed(1)+
+         ' МБ) через '+(route==='primary'?'основной сервер':
+         route==='relay'?'резервный сервер':'хранилище')+'.');
      }
-     return valid;
+     return bytes;
    };
-   const direct=(async()=>{
-     status('Скачиваю готовый Excel напрямую из хранилища (без обращения к MAIN)…');
-     const timeout=setTimeout(()=>controllers.direct.abort(),60000);
+   const viaEdge=async route=>{
+     status(route==='primary'?'Скачиваю готовый Excel с основного сервера…':
+       'Основной канал не ответил быстро; подключаю резервный сервер…');
      try{
-       const res=await fetch(initial,{cache:'no-store',signal:controllers.direct.signal});
-       if(!res.ok)throw Error('HTTP '+res.status);
-       return accept('direct',await res.arrayBuffer());
-     }catch(e){
-       directErr=controllers.direct.signal.aborted?
-         'Прямая загрузка прервана или превысила 60 секунд':String(e.message||e);
-       throw Error(directErr);
-     }finally{clearTimeout(timeout)}
-   })();
-   const relay=new Promise((resolve,reject)=>{
+       const bytes=await planGuestTransport(route,'download',{job_id:jobId},
+         false,true,controllers[route].signal);
+       return accept(route,bytes);
+     }catch(e){errors[route]=String(e.message||e);throw e;}
+   };
+   const delayed=(ms,fn)=>new Promise((resolve,reject)=>{
      setTimeout(()=>{
        if(winner){resolve(null);return}
-       status('Прямое скачивание идёт; резервный сервер подключён параллельно…');
-       planGuestTransport('relay','download',{job_id:jobId},false,true,
-         controllers.relay.signal)
-         .then(bytes=>resolve(accept('relay',bytes)))
-         .catch(e=>{relayErr=String(e.message||e);reject(e)});
-     },2200);
+       fn().then(resolve,reject);
+     },ms);
+   });
+   const primary=viaEdge('primary');
+   const relay=delayed(1500,()=>viaEdge('relay'));
+   const storage=delayed(4500,async()=>{
+     status('Параллельно пробую прямую загрузку из хранилища…');
+     try{
+       const verified=planGuestVerifiedExcelUrl(url);
+       const timer=setTimeout(()=>controllers.storage.abort(),70000);
+       try{
+         const res=await fetch(verified,{cache:'no-store',signal:controllers.storage.signal});
+         if(!res.ok)throw Error('HTTP '+res.status);
+         return accept('storage',await res.arrayBuffer());
+       }finally{clearTimeout(timer)}
+     }catch(e){errors.storage=String(e.message||e);throw e;}
    });
    try{
-     const result=await Promise.any([direct,relay]);
-     controllers.direct.abort();controllers.relay.abort();
-     planGuestExcelCache.set(jobId,result.slice(0));
+     const buffer=await Promise.any([primary,relay,storage]);
+     for(const c of Object.values(controllers))c.abort();
+     planGuestExcelCache.set(jobId,buffer.slice(0));
      while(planGuestExcelCache.size>2)
        planGuestExcelCache.delete(planGuestExcelCache.keys().next().value);
-     return result;
+     return buffer;
    }catch(_){
-     // The original signed URL lasts only 120 seconds. It may have expired
-     // while the backup was being attempted. Ask for a FRESH signature and
-     // retry the direct storage download ONCE (read-only; no new MAIN job).
-     controllers.direct.abort();controllers.relay.abort();
-     status('Оба способа скачивания не ответили. Обновляю ссылку на сохранённый Excel…');
+     for(const c of Object.values(controllers))c.abort();
+     // One final attempt with a NEW signed URL; never request MAIN to
+     // regenerate an immutable completed job.
+     status('Проверяю сохранённый файл и обновляю ссылку для последней попытки…');
      try{
-       const meta=await planGuestFetch('status',{job_id:jobId});
-       if(meta?.status!=='completed'||!meta.download_url)
-         throw Error('Готовый Excel не найден для этого задания.');
-       const refreshed=planGuestVerifiedExcelUrl(meta.download_url);
-       const controller=new AbortController();
-       const timeout=setTimeout(()=>controller.abort(),60000);
+       const result=await planGuestFetch('status',{job_id:jobId});
+       if(result.status!=='completed'||!result.download_url)
+         throw Error('Файл не найден среди готовых заданий');
+       const refreshed=planGuestVerifiedExcelUrl(result.download_url);
+       const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),60000);
        try{
-         const res=await fetch(refreshed,{cache:'no-store',signal:controller.signal});
-         if(!res.ok)throw Error('HTTP '+res.status);
-         const bytes=planGuestValidateExcel(await res.arrayBuffer());
+         const response=await fetch(refreshed,{cache:'no-store',signal:ac.signal});
+         if(!response.ok)throw Error('HTTP '+response.status);
+         const bytes=planGuestValidateExcel(await response.arrayBuffer());
          planGuestExcelCache.set(jobId,bytes.slice(0));
-         status('Excel получен по обновлённой прямой ссылке ('+
-           (bytes.byteLength/1048576).toFixed(1)+' МБ).');
+         status('Готовый Excel получен по обновлённой ссылке.');
          return bytes;
-       }finally{clearTimeout(timeout)}
+       }finally{clearTimeout(timer)}
      }catch(e){
-       throw Error('Готовый Excel сохранён на сервере, но не скачивается с этого компьютера. '+
-         'Прямой канал: '+directErr+'. Резервный: '+relayErr+
-         '. Повторная прямая загрузка: '+String(e.message||e)+
-         '. Новое задание MAIN создавать не нужно.');
+       throw Error('Excel на сервере, но браузер не смог его получить. '+
+         'Основной канал: '+(errors.primary||'не ответил')+
+         '; резервный: '+(errors.relay||'не ответил')+
+         '; хранилище: '+(errors.storage||'не ответило')+
+         '; обновлённая ссылка: '+String(e.message||e)+
+         '. Код MAIN менять и новый файл создавать не нужно.');
      }
    }
  })();
- planGuestExcelInflight.set(jobId,task);
- try{return (await task).slice(0)}
+ planGuestExcelInflight.set(jobId,download);
+ try{return (await download).slice(0)}
  finally{planGuestExcelInflight.delete(jobId)}
 }
 async function planBridgePair(){
