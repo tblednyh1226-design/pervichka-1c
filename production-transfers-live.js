@@ -463,6 +463,12 @@ async function transferSend(index){
     '\nПозиций: '+list.length+', количество: '+list.reduce((a,x)=>a+x.amount,0)+
     '\nСтатус NEW, без проведения. Номер генерирует iiko. Повтор создаст дубль.';
  if(!window.confirm(message))return;
+ // Only lock after prerequisites have passed and a real network send can start.
+ const pair=typeof planGuestStored==='function'?planGuestStored():null;
+ if(!pair?.deviceId||!/^[0-9a-f]{32}$/i.test(pair.token||'')){
+   transferStatus('Не найден действующий код MAIN. Отправка не начиналась.',true);
+   return;
+ }
  // One-attempt lock: starts at dispatch, remains blocked whatever the response.
  transferLive.locks.add(key);
  transferLive.sending.add(key);
