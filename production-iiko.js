@@ -174,6 +174,80 @@ function productionPastryColumns(rows,pastryStart,mainHeader,pastryEnd){
    brCol:nearest?.roles.br.length===1?nearest.roles.br[0]:null,
    headerRow:nearest?.row??mainHeader,needsReview:true};
 }
+function productionLetter(col){
+ let n=col+1,s='';
+ while(n>0){n--;s=String.fromCharCode(65+n%26)+s;n=Math.floor(n/26)}
+ return s;
+}
+function productionRenderPastryReview(){
+ const root=document.getElementById('prodPastryColumns');
+ if(!root)return;
+ const context=window.productionContext,p=context?.pastryColumns;
+ if(!p?.needsReview){root.hidden=true;root.innerHTML='';return}
+ const headings=productionRows[p.headerRow]||[];
+ const first=productionRows.slice(context.pastry.start+1,context.pastry.start+6)
+   .find(r=>String(r?.[1]??'').trim()&&!productionGroups.test(String(r[1])));
+ const count=Math.min(120,Math.max(headings.length,context.heads.length,first?.length||0));
+ const controls=[['total','Всего'],['pr','Раздача Правды'],['br','Раздача Бухара']]
+   .map(([key,label])=>{
+     const wanted=p[key+'Col'];
+     const choices='<option value="">Выберите колонку</option>'+
+       Array.from({length:count},(_,col)=>{
+         const name=String(headings[col]||context.heads[col]||'').trim();
+         const sample=String(first?.[col]??'').trim();
+         return '<option value="'+col+'"'+(wanted===col?' selected':'')+'>'+
+           productionText(productionLetter(col)+' — '+(name||'без названия')+
+           (sample?' · '+sample.slice(0,18):''))+'</option>';
+       }).join('');
+     return '<label>'+productionText(label)+
+       '<select id="prodPastry-'+key+'">'+choices+'</select></label>';
+   }).join('');
+ root.hidden=false;
+ root.innerHTML='<p><b>План загружен, но заголовки выпечки отличаются.</b> '+
+  'Выберите соответствующие колонки. До подтверждения перемещения не формируются.</p>'+
+  '<div class="formgrid">'+controls+'</div>'+
+  '<button type="button" onclick="productionConfirmPastryColumns()">Подтвердить колонки выпечки</button>';
+}
+function productionConfirmPastryColumns(){
+ const context=window.productionContext;
+ if(!context?.pastryColumns?.needsReview)return;
+ const selected={};
+ for(const [key,label] of [['total','Всего'],['pr','Раздача Правды'],['br','Раздача Бухара']]){
+   const value=String(document.getElementById('prodPastry-'+key)?.value??'');
+   if(!/^\d+$/.test(value)){productionError(Error('Выберите колонку «'+label+'»'));return}
+   selected[key]=Number(value);
+ }
+ if(new Set(Object.values(selected)).size!==3){
+   productionError(Error('«Всего», ПР и БР должны быть разными колонками'));return;
+ }
+ const examples=[];
+ for(let i=context.pastry.start+1;i<context.pastry.end&&examples.length<3;i++){
+   const row=productionRows[i]||[],name=String(row[1]??'').trim();
+   if(!name||productionNorm(name)==='наименование'||productionGroups.test(name))continue;
+   const raw=row[selected.total];
+   if(String(raw??'').trim()==='')continue;
+   const total=productionQuantity(raw),pr=productionQuantity(row[selected.pr]);
+   const br=productionQuantity(row[selected.br]);
+   if(total===null||pr===null&&String(row[selected.pr]??'').trim()!==''||
+      br===null&&String(row[selected.br]??'').trim()!==''||
+      (pr||0)>total||(br||0)>total-(pr||0)){
+      productionError(Error('Проверьте выбранные колонки, некорректное значение в строке '+(i+1)+': '+name));
+      return;
+   }
+   examples.push(name+': всего '+total+', ПР '+(pr||0)+', БР '+(br||0));
+ }
+ if(!examples.length){productionError(Error('Не найдено чисел в колонке «Всего» для выпечки'));return}
+ const msg='Подтвердить колонки? Всего '+productionLetter(selected.total)+
+  ', ПР '+productionLetter(selected.pr)+', БР '+productionLetter(selected.br)+
+  '\nПримеры:\n'+examples.join('\n')+
+  '\n\nПроверьте, что это именно нужные количества Excel.';
+ if(!window.confirm(msg))return;
+ context.pastryColumns={totalCol:selected.total,prCol:selected.pr,
+   brCol:selected.br,headerRow:context.pastryColumns.headerRow,
+   needsReview:false,manuallyConfirmed:true};
+ productionRenderPastryReview();
+ document.getElementById('prodstatus').textContent='Колонки выпечки подтверждены. Можно формировать документы.';
+}
 function productionSelectSheet(){
  if(!productionBook)return;
  const i=Number(document.getElementById('prodsheet').value);
