@@ -9,51 +9,117 @@ function productionInit(){
  const file=document.getElementById('prodfile');
  if(file&&!file.dataset.ready){file.dataset.ready='1';file.addEventListener('change',productionOpen)}
 }
-async function productionOpen(){
- const f=document.getElementById('prodfile').files[0];if(!f)return;
- try{
-  document.getElementById('prodstatus').textContent='Читаю Excel…';
-  // A new import attempt replaces the previous plan, even if the new file is damaged.
-  // Never leave old acts ready for download after a failed replacement.
-  productionBook=null;productionBytes=null;
-  if(typeof morningState!=='undefined'){morningState.book=null;morningState.bytes=null;morningState.result=null;}
-  if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Читаю новый Excel. Предыдущие акты сняты с подготовки.');
-  if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
-  const bytes=await f.arrayBuffer();
-  productionBytes=bytes;
-  const metadata=XLSX.read(bytes,{type:'array',bookSheets:true});
-  if(!metadata.SheetNames?.length)throw Error('Книга Excel не содержит листов.');
-  productionBook={SheetNames:metadata.SheetNames,Sheets:{}};
-  productionFileName=f.name;
-  if(typeof morningPrepareBook==='function')morningPrepareBook(productionBook,f.name,bytes);
-  document.getElementById('prodsheet').innerHTML=productionBook.SheetNames.map((name,i)=>'<option value="'+i+'">'+productionText(name)+'</option>').join('');
-  document.getElementById('prodsheet').value=String(productionBook.SheetNames.length-1);
-  productionSelectSheet();
- }catch(e){productionError(e)}
-}
-// The plan is shared between tabs; reusing it must never redownload the workbook.
-function productionUseMorningBook(){
- const status=document.getElementById('prodstatus');
- if(typeof morningState==='undefined'||!morningState.book){
-   if(status)status.textContent='Сначала получите план с MAIN на вкладке «Акт приготовления» или загрузите Excel здесь.';
-   return false;
- }
- productionBook=morningState.book;
- productionBytes=morningState.bytes||null;
- productionFileName=morningState.fileName||'ПЛАН ПРОИЗВОДСТВА.xlsx';
+// Transfers have their own afternoon copy of the Excel plan.
+// Never replace morningState or invalidate cooking-act iiko mappings here.
+let productionMainBusy=false;
+function productionClearSource(message){
+ productionBook=null;productionBytes=null;productionRows=[];productionDocuments=[];
+ productionFileName='';productionSheetName='';
+ window.productionContext=null;
  const select=document.getElementById('prodsheet');
- if(!select)return false;
- select.innerHTML=productionBook.SheetNames.map((name,i)=>
-   '<option value="'+i+'">'+productionText(name)+'</option>').join('');
- const selected=morningState.result?.sheet||'';
- const index=productionBook.SheetNames.indexOf(selected);
- select.value=String(index>=0?index:productionBook.SheetNames.length-1);
+ if(select)select.innerHTML='<option value="">Загрузите отдельный план перемещений</option>';
+ const recipients=document.getElementById('prodrecipients');
+ if(recipients)recipients.innerHTML='';
+ const result=document.getElementById('prodresult');
+ if(result){result.hidden=true;result.innerHTML=''}
+ const status=document.getElementById('prodstatus');
+ if(status)status.textContent=message||'Для перемещений нужен отдельный Excel.';
+}
+function productionLoadIndependentBook(bytes,name){
+ if(typeof XLSX==='undefined')throw Error('Модуль Excel не загружен');
+ const previous=productionSheetName;
+ const meta=XLSX.read(bytes,{type:'array',bookSheets:true});
+ if(!meta.SheetNames?.length)throw Error('Excel не содержит листов');
+ const select=document.getElementById('prodsheet');
+ if(!select)throw Error('Поле даты не найдено');
+ // Change only afternoon plan state, and only after validating the new workbook.
+ productionBook={SheetNames:meta.SheetNames,Sheets:{}};
+ productionBytes=bytes;
+ productionFileName=name;
+ select.innerHTML=meta.SheetNames.map((sheet,i)=>
+   '<option value="'+i+'">'+productionText(sheet)+'</option>').join('');
+ const prior=meta.SheetNames.indexOf(previous);
+ // Prefer the same day as the morning plan, but NEVER reuse its bytes or worksheets.
+ const morningSheet=typeof morningState!=='undefined'?morningState.result?.sheet:'';
+ const matchedMorning=meta.SheetNames.indexOf(morningSheet);
+ select.value=String(prior>=0?prior:matchedMorning>=0?matchedMorning:meta.SheetNames.length-1);
+ productionSelectSheet();
+ const status=document.getElementById('prodstatus');
+ if(status)status.textContent='Отдельный план перемещений получен: '+name+
+  '. Лист: '+productionSheetName+'. Выберите склад и получателей. Утренний план не изменён.';
+}
+async function productionOpen(){
+ const file=document.getElementById('prodfile')?.files?.[0];
+ if(!file||productionMainBusy)return;
+ const status=document.getElementById('prodstatus');
+ productionClearSource('Читаю отдельный Excel для перемещений…');
  try{
-   productionSelectSheet();
-   if(status)status.textContent='Использую уже полученный Excel «'+productionFileName+
-     '». Для перемещений выбирайте день и столбцы получателей; повторное скачивание не требуется.';
-   return true;
- }catch(e){productionError(e);return false}
+  const bytes=await file.arrayBuffer();
+  productionLoadIndependentBook(bytes,file.name);
+ }catch(e){
+  productionClearSource('Ошибка нового плана перемещений: '+(e.message||e));
+ }
+}
+async function productionMainDownload(url,jobId){
+ if(!url||!jobId)throw Error('MAIN не выдал ссылку и номер задания для нового Excel');
+ let response;
+ if(planGuestPreferredRoute!=='relay'){
+  const controller=new AbortController();
+  const timeoutId=setTimeout(()=>controller.abort(),15000);
+  try{
+   response=await fetch(url,{cache:'no-store',signal:controller.signal});
+   if(!response.ok)throw Error('HTTP '+response.status);
+  }catch(e){
+   planGuestPreferredRoute='relay';
+  }finally{clearTimeout(timeoutId)}
+ }
+ if(!response){
+  const status=document.getElementById('prodstatus');
+  if(status)status.textContent='Основное хранилище недоступно. Скачиваю новый план через резервный сервер…';
+  response=await planGuestTransport('relay','download',{job_id:jobId},false,true);
+ }
+ const bytes=await response.arrayBuffer();
+ if(!bytes.byteLength)throw Error('Получен пустой Excel');
+ return bytes;
+}
+async function productionMainRequest(){
+ if(productionMainBusy)return;
+ if(typeof planGuestFetch!=='function'||typeof planGuestTransport!=='function')
+  throw Error('Модуль подключения MAIN не загружен');
+ if(typeof planBridgeBusy!=='undefined'&&planBridgeBusy){
+  document.getElementById('prodstatus').textContent='Идёт утренний запрос MAIN. Дождитесь окончания перед загрузкой файла для перемещений.';
+  return;
+ }
+ productionMainBusy=true;
+ const button=document.getElementById('prodRequestMainBtn');
+ if(button)button.disabled=true;
+ productionClearSource('Создаю НОВОЕ задание MAIN для перемещений. Утренний файл и акты не изменяются…');
+ try{
+  const job=await planGuestFetch('request');
+  if(!job?.job_id)throw Error('MAIN не вернул номер нового задания');
+  for(let attempt=0;attempt<35;attempt++){
+   const r=await planGuestFetch('status',{job_id:job.job_id});
+   if(r.status==='failed')throw Error('MAIN: '+(r.error||'не удалось подготовить Excel'));
+   if(r.status==='completed'){
+    const status=document.getElementById('prodstatus');
+    if(status)status.textContent='Новый Excel для перемещений готов. Скачиваю…';
+    const bytes=await productionMainDownload(r.download_url,job.job_id);
+    productionLoadIndependentBook(bytes,'План перемещений с MAIN.xlsx');
+    return;
+   }
+   const status=document.getElementById('prodstatus');
+   if(status)status.textContent=r.status==='processing'?
+     'MAIN читает обновлённый план перемещений…':
+     'Новое задание для перемещений в очереди MAIN…';
+   await new Promise(resolve=>setTimeout(resolve,2000));
+  }
+  throw Error('MAIN ещё не подготовил файл. Задание осталось в очереди. Не создавайте повторное без проверки.');
+ }catch(e){
+  productionClearSource('Не удалось получить отдельный план для перемещений: '+(e.message||e));
+ }finally{
+  productionMainBusy=false;
+  if(button)button.disabled=false;
+ }
 }
 function productionSelectSheet(){
  if(!productionBook)return;
