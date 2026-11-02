@@ -263,7 +263,23 @@ function transferStoreOptions(routeName,selectedId){
  return '<option value="">'+(transferLive.connected?'Выберите склад iiko':'Сначала загрузите склады iiko')+'</option>'+options;
 }
 function transferExactStore(name){
- const matches=transferLive.stores.filter(s=>transferNorm(s.name)===transferNorm(name));
+ // Match a unique full name first, then a unique short name.
+ // Never guess when two iiko stores share the same abbreviation.
+ const normalized=transferNorm(name);
+ if(!normalized)return '';
+ const exact=transferLive.stores.filter(s=>transferNorm(s.name)===normalized);
+ if(exact.length===1)return exact[0].id;
+ if(exact.length>1)return '';
+ const short=v=>transferNorm(v).replace(/[«»"']/g,'').replace(/[._-]+/g,' ')
+   .replace(/\\s+/g,' ').trim();
+ const needle=short(name);
+ const matches=transferLive.stores.filter(store=>{
+   const full=short(store.name);
+   if(full===needle)return true;
+   // Prefix must end at a word boundary; avoid matching unrelated stores.
+   return full.startsWith(needle+' ')||full.startsWith(needle+'(')||
+     full.startsWith(needle+' /')||full.startsWith(needle+',');
+ });
  return matches.length===1?matches[0].id:'';
 }
 function transferStore(di,kind){
