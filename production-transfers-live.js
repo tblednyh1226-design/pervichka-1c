@@ -279,7 +279,14 @@ function transferStore(di,kind){
  const doc=productionDocuments?.[di];if(!doc)return '';
  const k=di+':'+kind,stored=transferLive.warehouse.get(k);
  const name=kind==='from'?doc.source:doc.target;
+ // Explicit manual choice wins; otherwise resolve from the loaded iiko stores.
  return transferLive.stores.some(s=>s.id===stored)?stored:transferExactStore(name);
+}
+function transferEnsureCatalog(){
+ if(typeof productionDocuments==='undefined'||!productionDocuments.length||
+    transferLive.connected||transferLive.busy)return;
+ const pair=typeof planGuestStored==='function'?planGuestStored():null;
+ if(pair?.deviceId&&pair?.token)void transferConnect();
 }
 function transferRememberStore(di,kind,value){
  transferLive.warehouse.set(di+':'+kind,String(value||''));
@@ -310,6 +317,7 @@ function transferDetailItems(doc,di){
    }).join('')+'</tbody></table></div>';
 }
 function transferRender(){
+ transferEnsureCatalog();
  const area=document.getElementById('prodresult');
  if(!area||typeof productionDocuments==='undefined'||!productionDocuments.length)return;
  const nextSig=transferSignature();
