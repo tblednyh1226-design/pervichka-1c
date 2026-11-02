@@ -1,4 +1,5 @@
 /* Printable internal transfer forms. No iiko writes. */
+const transferPrintTotal=lines=>lines.reduce((sum,x)=>sum+(Number.isFinite(x.amount)&&x.price>=0?x.amount:0),0);
 const transferPrintMoney=n=>Number(n).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
 function transferPrintForms(){
  const root=document.getElementById('transferPrintResult');
@@ -22,10 +23,10 @@ function transferPrintForms(){
   const footer=document.createElement('tr');
   const label=document.createElement('th');label.colSpan=4;label.textContent='ИТОГО';footer.append(label);
   const amount=document.createElement('th');
-  amount.textContent=missing.length?'Проверьте цены':transferPrintMoney(lines.reduce((sum,x)=>sum+x.amount,0));
+  amount.textContent=transferPrintMoney(transferPrintTotal(lines));
   footer.append(amount);table.append(footer);
   wrap.append(table);
-  const total=document.createElement('p');total.textContent='Итого: '+(missing.length?'требуется заполнить цены':transferPrintMoney(lines.reduce((s,x)=>s+x.amount,0))+' руб.');wrap.append(total);
+  const total=document.createElement('p');total.textContent='Итого: '+(transferPrintMoney(transferPrintTotal(lines))+' руб.'+(missing.length?' (без '+missing.length+' поз. без цены)':''));wrap.append(total);
   const print=document.createElement('button');print.textContent='Распечатать';print.onclick=()=>transferPrintOpen(doc,index,lines);wrap.append(print);
   const download=document.createElement('button');download.textContent='Скачать Excel';download.onclick=()=>transferPrintDownload(doc,index,lines);wrap.append(download);
   root.append(wrap);
@@ -41,10 +42,10 @@ function transferPrintDownload(doc,index,lines){
  const lastRow=firstRow+lines.length-1;
  for(let i=0;i<lines.length;i++){
   const row=firstRow+i;
-  ws['E'+row]={t:'n',f:'C'+row+'*D'+row,z:'#,##0.00'};
+  ws['E'+row]={t:'n',f:'IF(D'+row+'="","",C'+row+'*D'+row+')',v:Number.isFinite(lines[i].amount)&&lines[i].price>=0?lines[i].amount:0,z:'#,##0.00'};
  }
  const totalRow=lastRow+1;
- ws['E'+totalRow]={t:'n',f:'SUM(E'+firstRow+':E'+lastRow+')',z:'#,##0.00'};ws['!cols']=[{wch:7},{wch:45},{wch:16},{wch:16},{wch:18}];
+ ws['E'+totalRow]={t:'n',f:'SUM(E'+firstRow+':E'+lastRow+')',v:transferPrintTotal(lines),z:'#,##0.00'};ws['!cols']=[{wch:7},{wch:45},{wch:16},{wch:16},{wch:18}];
  const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,ws,'Перемещение');
  XLSX.writeFile(book,'Перемещение_'+(index+1)+'_'+String(doc.target).replace(/[^а-яёa-z0-9-]/gi,'_')+'.xlsx');
 }
@@ -52,7 +53,8 @@ function transferPrintOpen(doc,index,lines){
  const w=window.open('','_blank');if(!w){alert('Разрешите всплывающие окна для печати');return;}
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const body=lines.map((x,i)=>'<tr><td>'+(i+1)+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.quantity)+'</td><td>'+(Number.isFinite(x.price)?transferPrintMoney(x.price):'—')+'</td><td>'+(Number.isFinite(x.amount)?transferPrintMoney(x.amount):'—')+'</td></tr>').join('');
- const total=lines.every(x=>Number.isFinite(x.amount))?transferPrintMoney(lines.reduce((s,x)=>s+x.amount,0))+' руб.':'Проверьте цены';
+ const missing=lines.filter(x=>!Number.isFinite(x.amount)||x.price<0).length;
+ const total=transferPrintMoney(transferPrintTotal(lines))+' руб.'+(missing?' (без '+missing+' поз. без цены)':'');
  w.document.write('<!doctype html><html lang="ru"><meta charset="utf-8"><title>Перемещение</title><style>body{font:14px Arial;margin:25px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #777;padding:7px;text-align:left}h2{margin-bottom:8px}@media print{button{display:none}}</style><h2>Перемещение № '+(index+1)+'</h2><p>Дата: '+esc(document.getElementById('prodDocDate')?.value||doc.date)+'</p><p>Откуда: '+esc(doc.source)+'<br>Куда: '+esc(doc.target)+'</p><table><thead><tr><th>№</th><th>Блюдо</th><th>Количество</th><th>Цена, руб.</th><th>Сумма, руб.</th></tr></thead><tbody>'+body+'</tbody><tfoot><tr><th colspan="4" style="text-align:right">ИТОГО</th><th>'+esc(total)+'</th></tr></tfoot></table><h3>Итого: '+esc(total)+'</h3><p>Отпустил: __________________ Получил: __________________</p><button onclick="window.print()">Печать</button></html>');
  w.document.close();w.focus();
 }
