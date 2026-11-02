@@ -19,6 +19,11 @@ function transferPrintForms(){
   const table=document.createElement('table'),head=document.createElement('tr');
   ['№','Блюдо','Количество','Цена, руб.','Сумма, руб.'].forEach(t=>{const th=document.createElement('th');th.textContent=t;head.append(th);});table.append(head);
   lines.forEach((line,i)=>{const tr=document.createElement('tr');[i+1,line.name,line.quantity,Number.isFinite(line.price)?transferPrintMoney(line.price):'—',Number.isFinite(line.amount)?transferPrintMoney(line.amount):'—'].forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.append(td);});table.append(tr);});
+  const footer=document.createElement('tr');
+  const label=document.createElement('th');label.colSpan=4;label.textContent='ИТОГО';footer.append(label);
+  const amount=document.createElement('th');
+  amount.textContent=missing.length?'Проверьте цены':transferPrintMoney(lines.reduce((sum,x)=>sum+x.amount,0));
+  footer.append(amount);table.append(footer);
   wrap.append(table);
   const total=document.createElement('p');total.textContent='Итого: '+(missing.length?'требуется заполнить цены':transferPrintMoney(lines.reduce((s,x)=>s+x.amount,0))+' руб.');wrap.append(total);
   const print=document.createElement('button');print.textContent='Распечатать';print.onclick=()=>transferPrintOpen(doc,index,lines);wrap.append(print);
@@ -40,6 +45,6 @@ function transferPrintOpen(doc,index,lines){
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const body=lines.map((x,i)=>'<tr><td>'+(i+1)+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.quantity)+'</td><td>'+(Number.isFinite(x.price)?transferPrintMoney(x.price):'—')+'</td><td>'+(Number.isFinite(x.amount)?transferPrintMoney(x.amount):'—')+'</td></tr>').join('');
  const total=lines.every(x=>Number.isFinite(x.amount))?transferPrintMoney(lines.reduce((s,x)=>s+x.amount,0))+' руб.':'Проверьте цены';
- w.document.write('<!doctype html><html lang="ru"><meta charset="utf-8"><title>Перемещение</title><style>body{font:14px Arial;margin:25px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #777;padding:7px;text-align:left}h2{margin-bottom:8px}@media print{button{display:none}}</style><h2>Перемещение № '+(index+1)+'</h2><p>Дата: '+esc(document.getElementById('prodDocDate')?.value||doc.date)+'</p><p>Откуда: '+esc(doc.source)+'<br>Куда: '+esc(doc.target)+'</p><table><thead><tr><th>№</th><th>Блюдо</th><th>Количество</th><th>Цена, руб.</th><th>Сумма, руб.</th></tr></thead><tbody>'+body+'</tbody></table><h3>Итого: '+esc(total)+'</h3><p>Отпустил: __________________ Получил: __________________</p><button onclick="window.print()">Печать</button></html>');
+ w.document.write('<!doctype html><html lang="ru"><meta charset="utf-8"><title>Перемещение</title><style>body{font:14px Arial;margin:25px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #777;padding:7px;text-align:left}h2{margin-bottom:8px}@media print{button{display:none}}</style><h2>Перемещение № '+(index+1)+'</h2><p>Дата: '+esc(document.getElementById('prodDocDate')?.value||doc.date)+'</p><p>Откуда: '+esc(doc.source)+'<br>Куда: '+esc(doc.target)+'</p><table><thead><tr><th>№</th><th>Блюдо</th><th>Количество</th><th>Цена, руб.</th><th>Сумма, руб.</th></tr></thead><tbody>'+body+'</tbody><tfoot><tr><th colspan="4" style="text-align:right">ИТОГО</th><th>'+esc(total)+'</th></tr></tfoot></table><h3>Итого: '+esc(total)+'</h3><p>Отпустил: __________________ Получил: __________________</p><button onclick="window.print()">Печать</button></html>');
  w.document.close();w.focus();
 }
