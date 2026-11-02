@@ -1,9 +1,25 @@
+const INVOICE_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-invoices';
+let invoiceCatalog=null;
+async function customerInvoiceLoadCatalog(){
+ const status=document.getElementById('customerInvoicesStatus');
+ try{
+  const pair=typeof planGuestStored==='function'?planGuestStored():null;
+  if(!pair?.deviceId||!pair?.token)throw Error('Сначала подключите MAIN');
+  if(status)status.textContent='Загружаю покупателей и склады iiko…';
+  const response=await fetch(INVOICE_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},body:JSON.stringify({action:'catalog'})});
+  const data=await response.json();if(!response.ok||!data.ok)throw Error(data.error||'Ошибка получения справочника');
+  invoiceCatalog=data;
+  customerInvoicesPreview();
+ }catch(e){if(status)status.textContent='Справочники iiko: '+String(e.message||e);}
+}
 /* Customer invoices: previews and explicit per-buyer send controls. */
 function customerInvoicesPreview(){
  const status=document.getElementById('customerInvoicesStatus');
  const target=document.getElementById('customerInvoicesResult');
  if(!status||!target)return;
  target.replaceChildren();status.textContent='';
+ const load=document.createElement('button');load.type='button';load.textContent='Обновить покупателей и склады из iiko';load.onclick=customerInvoiceLoadCatalog;target.append(load);
+ if(invoiceCatalog){const info=document.createElement('p');info.textContent='iiko: '+invoiceCatalog.counteragents.length+' контрагентов, '+invoiceCatalog.stores.length+' складов. Отправка документов пока отключена на сервере.';target.append(info);}
  const ctx=window.productionContext;
  if(!ctx||typeof productionRows==='undefined'||!productionRows.length){
   status.textContent='Сначала загрузите дневной план Excel и выберите лист.';return;
@@ -77,6 +93,8 @@ function customerInvoicesPreview(){
    table.append(tr);
   }
   details.append(table);
+  if(invoiceCatalog){const candidates=invoiceCatalog.counteragents.filter(x=>norm(x.name)===norm(buyer));const select=document.createElement('select');select.setAttribute('aria-label','Контрагент iiko для '+buyer);const empty=document.createElement('option');empty.value='';empty.textContent='Выберите контрагента iiko';select.append(empty);for(const x of invoiceCatalog.counteragents){const option=document.createElement('option');option.value=x.id;option.textContent=x.name;select.append(option)}select.value=candidates.length===1?candidates[0].id:'';details.append(select);}
+
   const btn=document.createElement('button');btn.type='button';btn.textContent='Выгрузить в iiko';btn.disabled=true;btn.title='Ожидается подключение серверной выгрузки расходных накладных';details.append(btn);
   target.append(details);
  }
