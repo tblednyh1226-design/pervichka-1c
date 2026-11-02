@@ -1,4 +1,4 @@
-/* Customer invoices: read-only preview, no iiko writes. */
+/* Customer invoices: previews and explicit per-buyer send controls. */
 function customerInvoicesPreview(){
  const status=document.getElementById('customerInvoicesStatus');
  const target=document.getElementById('customerInvoicesResult');
@@ -76,10 +76,12 @@ function customerInvoicesPreview(){
    }
    table.append(tr);
   }
-  details.append(table);target.append(details);
+  details.append(table);
+  const btn=document.createElement('button');btn.type='button';btn.textContent='Выгрузить в iiko';btn.disabled=true;btn.title='Ожидается подключение серверной выгрузки расходных накладных';details.append(btn);
+  target.append(details);
  }
  const med=buyers.has('Мед экспресс')?'«Мед экспресс» найден.':'«Мед экспресс» не найден в заголовках этого листа.';
  status.textContent='Сформировано '+cards.length+' накладных для проверки. '+med+
   (unrecognized.length?' Неопознанные заголовки: '+unrecognized.join(', ')+'.':'')+
-  ' Отправка в iiko не выполняется.';
+  ' Кнопки выгрузки появятся в каждой накладной; до подключения серверного обработчика они заблокированы.';
 }
