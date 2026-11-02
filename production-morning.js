@@ -221,7 +221,7 @@ function morningFindSections(rows,header){
 function morningLargePieInPieces(name,weight){
   // One source-of-truth for cooking acts, transfers and customer invoices.
   const dish=morningNorm(name),unit=morningNorm(weight);
-  if(!/(?:^|[\s(])пирог(?:$|[\s,.(])/u.test(dish)||/пирож|мини[\s-]*пирог|маленьк/u.test(dish))return false;
+  if(!/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/u.test(dish)||/пирож|мини[\s-]*пирог|маленьк/u.test(dish))return false;
   if(/(?:^|[\s(])(?:кус(?:ок|очек)?|порц(?:ия|ии)?)(?:$|[\s.)])/u.test(unit))return false;
   const text=dish+' '+unit;
   const matches=[...text.matchAll(/(\d+(?:[.,]\d+)?)\s*(кг|гр|г)(?=$|[\s,.)])/gu)];
