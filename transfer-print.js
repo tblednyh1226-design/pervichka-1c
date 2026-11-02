@@ -35,8 +35,16 @@ function transferPrintDownload(doc,index,lines){
  if(typeof XLSX==='undefined'){alert('Библиотека Excel не загружена');return;}
  const data=[['Перемещение № '+(index+1)],['Дата',document.getElementById('prodDocDate')?.value||doc.date],['Откуда',doc.source],['Куда',doc.target],[],['№','Блюдо','Количество','Цена, руб.','Сумма, руб.']];
  lines.forEach((x,i)=>data.push([i+1,x.name,x.quantity,Number.isFinite(x.price)?x.price:'',Number.isFinite(x.amount)?x.amount:'']));
- data.push(['','ИТОГО','','',lines.every(x=>Number.isFinite(x.amount))?lines.reduce((s,x)=>s+x.amount,0):'Проверьте цены']);
- const ws=XLSX.utils.aoa_to_sheet(data);ws['!cols']=[{wch:7},{wch:45},{wch:16},{wch:16},{wch:18}];
+ data.push(['','ИТОГО','','',null]);
+ const ws=XLSX.utils.aoa_to_sheet(data);
+ const firstRow=7;
+ const lastRow=firstRow+lines.length-1;
+ for(let i=0;i<lines.length;i++){
+  const row=firstRow+i;
+  ws['E'+row]={t:'n',f:'C'+row+'*D'+row,z:'#,##0.00'};
+ }
+ const totalRow=lastRow+1;
+ ws['E'+totalRow]={t:'n',f:'SUM(E'+firstRow+':E'+lastRow+')',z:'#,##0.00'};ws['!cols']=[{wch:7},{wch:45},{wch:16},{wch:16},{wch:18}];
  const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,ws,'Перемещение');
  XLSX.writeFile(book,'Перемещение_'+(index+1)+'_'+String(doc.target).replace(/[^а-яёa-z0-9-]/gi,'_')+'.xlsx');
 }
