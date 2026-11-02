@@ -219,13 +219,18 @@ function morningFindSections(rows,header){
   return {pastryStart,compoteLast,extrasStart,nextAfterPastry};
 }
 function morningLargePieInPieces(name,weight){
+  // One source-of-truth for cooking acts, transfers and customer invoices.
   const dish=morningNorm(name),unit=morningNorm(weight);
-  if(!/(?:^|\s)пирог(?:\s|$)/.test(dish)||/пирож|мини.пирог|маленьк/.test(dish))return false;
+  if(!/(?:^|[\s(])пирог(?:$|[\s,.(])/u.test(dish)||/пирож|мини[\s-]*пирог|маленьк/u.test(dish))return false;
+  if(/(?:^|[\s(])(?:кус(?:ок|очек)?|порц(?:ия|ии)?)(?:$|[\s.)])/u.test(unit))return false;
   const text=dish+' '+unit;
-  if(/(?:^|\s)(?:кус(?:ок|очек|\.)?|порц(?:ия|ии|\.)?)(?:\s|$)/.test(unit))return false;
-  const m=/(\d+(?:[.,]\d+)?)\s*(кг|гр|г)(?:\.|\b|$)/.exec(text);
-  if(m)return Number(m[1].replace(',','.'))*(m[2]==='кг'?1000:1)>=900;
-  return !/\d+\s*(?:гр|г|кг)/.test(text);
+  const matches=[...text.matchAll(/(\d+(?:[.,]\d+)?)\s*(кг|гр|г)(?=$|[\s,.)])/gu)];
+  if(matches.length){
+    const grams=matches.map(m=>Number(m[1].replace(',','.'))*(m[2]==='кг'?1000:1));
+    return grams.some(g=>g>=900);
+  }
+  // No stated weight: in the pastry section "Пирог ..." means a whole pie.
+  return true;
 }
 function morningExtract(rows,header,col,from,to,warnings,convertLargePies=false){
   const result=[];
