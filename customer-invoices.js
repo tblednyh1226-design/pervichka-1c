@@ -1,38 +1,85 @@
-/* Customer invoices: local preview only, never sends to iiko. */
+/* Customer invoices: read-only preview, no iiko writes. */
 function customerInvoicesPreview(){
- const status=document.getElementById('customerInvoicesStatus'),target=document.getElementById('customerInvoicesResult');
+ const status=document.getElementById('customerInvoicesStatus');
+ const target=document.getElementById('customerInvoicesResult');
  if(!status||!target)return;
- target.replaceChildren();
- if(!typeof productionContext==='undefined'||!productionRows?.length){status.textContent='Сначала загрузите план и выберите день в разделе перемещений.';return;}
- const names=['Янино','Навык+','Эйджи','Обухово','Ревада','Крокид','НПП','Сервис Ман','Гранд Капитал'];
- const groups=[[4],[5],[6],[7],[8],[9],[10],[11],[12,13]];
- const rows=productionRows;
- const num=x=>{if(typeof x==='number')return x;const n=Number(String(x??'').replace(/\s/g,'').replace(',','.'));return Number.isFinite(n)?n:0;};
- let count=0;
- for(let i=0;i<names.length;i++){
-  const lines=[];
-  for(let ri=0;ri<rows.length;ri++){
-   const row=rows[ri];
-   const ctx=window.productionContext;
-   if(ctx && (ri<=ctx.header || (ri>ctx.pastry.end && ri<ctx.pastry.start)))continue;
-   if(ctx && ri>ctx.pastry.end)continue;
-   if(!Array.isArray(row))continue;
-   const item=String(row[1]||'').trim(),price=num(row[3]),qty=groups[i].reduce((v,col)=>v+num(row[col]),0);
-   if(!item||qty<=0||/^(итого|всего|сумма|наименование|допы|выпечка|цена)/i.test(item))continue;
-   if(price<=0){status.textContent='Есть позиции без цены. Проверьте столбец D.';continue;}
-   lines.push({item,qty,price,sum:Math.round(qty*price*100)/100});
-  }
-  if(!lines.length)continue;
-  count++;
-  const wrap=document.createElement('details'),summary=document.createElement('summary');
-  summary.textContent=names[i]+' — '+lines.length+' поз., '+lines.reduce((v,x)=>v+x.sum,0).toFixed(2)+' руб.';
-  wrap.append(summary);
-  const table=document.createElement('table');
-  const head=document.createElement('tr');
-  for(const title of ['Блюдо','Кол-во','Цена','Сумма']){const th=document.createElement('th');th.textContent=title;head.append(th);}
-  table.append(head);
-  for(const line of lines){const tr=document.createElement('tr');for(const value of [line.item,line.qty,line.price.toFixed(2),line.sum.toFixed(2)]){const td=document.createElement('td');td.textContent=value;tr.append(td);}table.append(tr);}
-  wrap.append(table);target.append(wrap);
+ target.replaceChildren();status.textContent='';
+ const ctx=window.productionContext;
+ if(!ctx||typeof productionRows==='undefined'||!productionRows.length){
+  status.textContent='Сначала загрузите дневной план Excel и выберите лист.';return;
  }
- status.textContent='Сформировано для проверки: '+count+' накладных. Контрагент iiko: Покупатели. Отправка не выполняется.';
+ const norm=v=>String(v??'').toLocaleLowerCase('ru').replace(/ё/g,'е').replace(/[^a-zа-я0-9+]+/gi,' ').trim();
+ const aliases=new Map([
+  ['янино','Янино'],['навык+','Навык+'],['навык','Навык+'],
+  ['эйджи','Эйджи'],['ейджи','Эйджи'],['обухово','Обухово'],
+  ['ревада','Ревада'],['крокид','Крокид'],['нпп','НПП'],
+  ['сервис ман','Сервис Ман'],['сервисман','Сервис Ман'],
+  ['гранд капитал','Гранд Капитал'],['гранд капитал ночь','Гранд Капитал'],
+  ['мед экспресс','Мед экспресс'],['медэкспресс','Мед экспресс']
+ ]);
+ const buyers=new Map(),unrecognized=[];
+ (ctx.heads||[]).forEach((raw,col)=>{
+  if(col<4)return;
+  const heading=String(raw??'').trim(),key=norm(heading);
+  if(!heading)return;
+  const buyer=aliases.get(key);
+  if(buyer){if(!buyers.has(buyer))buyers.set(buyer,[]);buyers.get(buyer).push(col);}
+  else if(!/^(всего|итого|раздача|правда|бухара|этм|редмонд|рэдмонд|бестужевская|модуль|мега|цена|кол во|количество|выпечка)/.test(key))
+   unrecognized.push(heading+' ('+(typeof XLSX!=='undefined'?XLSX.utils.encode_col(col):col)+')');
+ });
+ if(!buyers.size){status.textContent='Не найдены заголовки покупателей в выбранном листе. Накладные не сформированы.';return;}
+ const number=v=>{
+  if(v===null||v===undefined||String(v).trim()==='')return null;
+  const n=Number(String(v).replace(/\s/g,'').replace(',','.'));
+  return Number.isFinite(n)?n:null;
+ };
+ const missingPrices=[],invalidQty=[],cards=[];
+ for(const [buyer,columns] of buyers){
+  const lines=[];
+  for(let i=ctx.header+1;i<ctx.pastry.end;i++){
+   if(i>ctx.pastry.compoteLast&&i<ctx.pastry.start)continue;
+   const row=productionRows[i]||[],name=String(row[1]??'').trim();
+   if(!name||/^(итого|всего|сумма|наименование|допы|выпечка|цена)/i.test(name)||
+      (typeof productionGroups!=='undefined'&&productionGroups.test(name)))continue;
+   let qty=0;
+   for(const col of columns){
+    const raw=row[col],value=number(raw);
+    if(value===null){if(String(raw??'').trim())invalidQty.push(buyer+': '+name+' (строка '+(i+1)+')');continue;}
+    if(value>0)qty+=value;
+   }
+   if(qty<=0)continue;
+   const price=number(row[3]);
+   if(price===null||price<0){missingPrices.push(buyer+': '+name+' (строка '+(i+1)+')');continue;}
+   lines.push({name,qty,price,amount:Math.round(qty*price*100)/100});
+  }
+  if(lines.length)cards.push({buyer,columns,lines});
+ }
+ if(missingPrices.length||invalidQty.length){
+  status.textContent='Накладные требуют проверки: '+(missingPrices.length?'нет цены у '+missingPrices.slice(0,6).join('; ')+'. ':'')+
+   (invalidQty.length?'Некорректные количества: '+invalidQty.slice(0,6).join('; '):'');
+  return;
+ }
+ for(const {buyer,columns,lines} of cards){
+  const details=document.createElement('details'),summary=document.createElement('summary');
+  const total=lines.reduce((v,x)=>v+x.amount,0);
+  summary.textContent=buyer+' — '+lines.length+' поз., '+total.toFixed(2)+' руб.';
+  details.append(summary);
+  const table=document.createElement('table'),header=document.createElement('tr');
+  for(const name of ['Блюдо','Количество','Цена, руб.','Сумма, руб.']){
+   const th=document.createElement('th');th.textContent=name;header.append(th);
+  }
+  table.append(header);
+  for(const line of lines){
+   const tr=document.createElement('tr');
+   for(const value of [line.name,line.qty,line.price.toFixed(2),line.amount.toFixed(2)]){
+    const td=document.createElement('td');td.textContent=value;tr.append(td);
+   }
+   table.append(tr);
+  }
+  details.append(table);target.append(details);
+ }
+ const med=buyers.has('Мед экспресс')?'«Мед экспресс» найден.':'«Мед экспресс» не найден в заголовках этого листа.';
+ status.textContent='Сформировано '+cards.length+' накладных для проверки. '+med+
+  (unrecognized.length?' Неопознанные заголовки: '+unrecognized.join(', ')+'.':'')+
+  ' Отправка в iiko не выполняется.';
 }
