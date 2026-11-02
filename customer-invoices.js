@@ -3,10 +3,10 @@ function customerInvoicesPreview(){
  const status=document.getElementById('customerInvoicesStatus'),target=document.getElementById('customerInvoicesResult');
  if(!status||!target)return;
  target.replaceChildren();
- if(!window.productionContext||!window.productionRows?.length){status.textContent='Сначала загрузите план и выберите день в разделе перемещений.';return;}
+ if(!typeof productionContext==='undefined'||!productionRows?.length){status.textContent='Сначала загрузите план и выберите день в разделе перемещений.';return;}
  const names=['Янино','Навык+','ЗИДКИ','Обухово','Ревада','Крокид','НПП','Сервис Ман','Гранд Капитал'];
  const groups=[[4],[5],[6],[7],[8],[9],[10],[11],[12,13]];
- const rows=window.productionRows;
+ const rows=productionRows;
  const num=x=>{if(typeof x==='number')return x;const n=Number(String(x??'').replace(/\s/g,'').replace(',','.'));return Number.isFinite(n)?n:0;};
  let count=0;
  for(let i=0;i<names.length;i++){
