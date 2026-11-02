@@ -219,16 +219,13 @@ function morningFindSections(rows,header){
   return {pastryStart,compoteLast,extrasStart,nextAfterPastry};
 }
 function morningLargePieInPieces(name,weight){
-  // Large pies are sold in eight slices. Do not convert пирожки or already sliced rows.
   const dish=morningNorm(name),unit=morningNorm(weight);
-  if(!/(?:^|\\s)пирог(?:\\s|$)/.test(dish)||/пирож|мини.пирог|маленьк/.test(dish))return false;
+  if(!/(?:^|\s)пирог(?:\s|$)/.test(dish)||/пирож|мини.пирог|маленьк/.test(dish))return false;
   const text=dish+' '+unit;
-  // A slice is already a piece; no second conversion.
-  if(/(?:^|\\s)(?:кус(?:ок|очек|\\.)?|порц(?:ия|ии|\\.)?)(?:\\s|$)/.test(unit))return false;
-  const m=/(\\d+(?:[.,]\\d+)?)\\s*(кг|гр|г)(?:\\.|\\b|$)/.exec(text);
-  if(m){const grams=Number(m[1].replace(',','.'))*(m[2]==='кг'?1000:1);return grams>=900;}
-  // In the pastry section full-size pies may have a blank weight cell.
-  return !/\\d+\\s*(?:гр|г|кг)/.test(text);
+  if(/(?:^|\s)(?:кус(?:ок|очек|\.)?|порц(?:ия|ии|\.)?)(?:\s|$)/.test(unit))return false;
+  const m=/(\d+(?:[.,]\d+)?)\s*(кг|гр|г)(?:\.|\b|$)/.exec(text);
+  if(m)return Number(m[1].replace(',','.'))*(m[2]==='кг'?1000:1)>=900;
+  return !/\d+\s*(?:гр|г|кг)/.test(text);
 }
 function morningExtract(rows,header,col,from,to,warnings,convertLargePies=false){
   const result=[];
