@@ -430,7 +430,10 @@ async function transferConnect(){
  }finally{
    transferLive.busy=false;
    if(button)button.disabled=false;
-   transferRefreshSendButtons();
+   // Rebuild diagnostic messages as well as buttons after catalog loading.
+   // Previously transferRender ran while busy=true, leaving stale "loading" notices.
+   if(typeof productionDocuments!=='undefined'&&productionDocuments.length)transferRender();
+   else transferRefreshSendButtons();
  }
 }
 async function transferPost(doc){
