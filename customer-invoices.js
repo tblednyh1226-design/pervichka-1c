@@ -82,9 +82,13 @@ function customerInvoicesPreview(){
     if(value>0)qty+=value;
    }
    if(qty<=0)continue;
+   const weight=String(row[2]??'').trim();
+   const isLargePie=typeof morningLargePieInPieces==='function'&&morningLargePieInPieces(name,weight);
+   const originalQty=qty;
+   if(isLargePie)qty*=8;
    const price=number(row[3]);
    if(price===null||price<0){missingPrices.push(buyer+': '+name+' (строка '+(i+1)+')');continue;}
-   lines.push({name,qty,price,amount:Math.round(qty*price*100)/100});
+   lines.push({name,qty,price,amount:Math.round(qty*price*100)/100,...(isLargePie?{sourceQuantity:originalQty,conversionFactor:8}:{})});
   }
   if(lines.length)cards.push({buyer,columns,lines});
  }
@@ -109,6 +113,7 @@ function customerInvoicesPreview(){
     const td=document.createElement('td');td.textContent=value;tr.append(td);
    }
    table.append(tr);
+   if(line.conversionFactor===8){const note=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=4;cell.textContent='Большой пирог: '+line.sourceQuantity+' × 8 = '+line.qty+' кусков';note.append(cell);table.append(note);}
   }
   details.append(table);
   let select=null;
