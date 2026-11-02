@@ -9,7 +9,7 @@ function transferPrintForms(){
   const wrap=document.createElement('div');wrap.className='card';
   const heading=document.createElement('h4');heading.textContent='№ '+(index+1)+' · '+doc.source+' → '+doc.target;wrap.append(heading);
   const lines=doc.items.map(item=>{
-   const row=productionRows[item.sourceRow]||[];
+   const row=productionRows[item.sourceRow-1]||[];
    const raw=row[3],clean=String(raw??'').replace(/\s/g,'').replace(',','.');
    const price=clean!==''?Number(clean):NaN;
    return {name:item.name,quantity:item.quantity,price,amount:price*item.quantity};
