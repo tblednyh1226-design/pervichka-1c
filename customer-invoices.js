@@ -11,10 +11,14 @@ function customerInvoicesPreview(){
  let count=0;
  for(let i=0;i<names.length;i++){
   const lines=[];
-  for(const row of rows){
+  for(let ri=0;ri<rows.length;ri++){
+   const row=rows[ri];
+   const ctx=window.productionContext;
+   if(ctx && (ri<=ctx.header || (ri>ctx.pastry.end && ri<ctx.pastry.start)))continue;
+   if(ctx && ri>ctx.pastry.end)continue;
    if(!Array.isArray(row))continue;
    const item=String(row[1]||'').trim(),price=num(row[3]),qty=groups[i].reduce((v,col)=>v+num(row[col]),0);
-   if(!item||qty<=0)continue;
+   if(!item||qty<=0||/^(итого|всего|сумма|наименование|допы|выпечка|цена)/i.test(item))continue;
    if(price<=0){status.textContent='Есть позиции без цены. Проверьте столбец D.';continue;}
    lines.push({item,qty,price,sum:Math.round(qty*price*100)/100});
   }
