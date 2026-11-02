@@ -337,6 +337,7 @@ function transferRender(){
       transferDetailItems(doc,i)+
       '<p class="muted">Сумма появится после подключения достоверной себестоимости. Ноль не подставляется.</p>'+
    '</details>'+
+   (disabled?'<p class="transfer-receipt">Причина блокировки: '+transferEscape(transferDisabledReason(doc,i,lock))+'</p>':'')+
    (transferLive.receipts.has(lock)?
      '<p class="transfer-receipt">'+
      (transferLive.receipts.get(lock).ok?
@@ -363,6 +364,19 @@ function transferButtonLabel(key){
  // Dispatch has started; don't rely on iiko status checks or unlock later.
  if(stored||transferLive.locks.has(key))return 'Отправка запущена';
  return 'Отправить в iiko';
+}
+function transferDisabledReason(doc,i,key){
+ if(transferLive.sending.has(key))return 'Запрос сейчас отправляется';
+ if(transferLive.locks.has(key)||localStorage.getItem(key))return 'Отправка уже запускалась. Сначала проверьте документ в iiko, чтобы избежать дубля';
+ if(transferLive.busy)return 'Загружается справочник iiko';
+ if(!transferLive.connected)return 'Нет подключения к iiko';
+ const from=transferStore(i,'from'),to=transferStore(i,'to');
+ if(!from)return 'Не выбран склад-отправитель iiko';
+ if(!to)return 'Не выбран склад-получатель iiko (проверьте Рэдмонд)';
+ if(from===to)return 'Склады отправителя и получателя совпадают';
+ const missing=transferAllItems(doc).filter((x,j)=>!transferFindProduct(x,i,j));
+ if(missing.length)return 'Не сопоставлены блюда: '+missing.slice(0,5).map(x=>x.name).join(', ');
+ return '';
 }
 function transferRefreshSendButtons(){
  if(typeof productionDocuments==='undefined')return;
