@@ -45,11 +45,15 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 .journal-link{display:inline-flex;align-items:center;justify-content:center;border:1px solid #d8dee8;border-radius:9px;padding:10px 13px;background:#fff;text-decoration:none;color:#244d87;font-weight:650}
 .journal-link:hover{background:#f1f5fb}
 .staff-header-label{color:#63738a;font-size:13px;font-weight:600;text-align:right}
+.staff-header-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.staff-header-actions #jumpJournalBtn{white-space:nowrap}
+#employeeJournalSection{scroll-margin-top:12px}
+@media(max-width:720px){.staff-header-actions{gap:6px}.staff-header-actions #jumpJournalBtn{font-size:12px;padding:9px}}
 @media(max-width:720px){.staff-header-label{font-size:12px}}
 </style>
 </head>
 <body>
-<header><div><b>КОЛХОЗ</b><small>Бланк списания продукции и сырья</small></div><span class="staff-header-label">Форма для сотрудников</span></header>
+<header><div><b>КОЛХОЗ</b><small>Бланк списания продукции и сырья</small></div><div class="staff-header-actions"><button type="button" id="jumpJournalBtn" class="primary">Журнал списаний</button><span class="staff-header-label">Форма для сотрудников</span></div></header>
 <main>
  <div class="top"><div><h1>Списание номенклатуры</h1><p class="muted">Накапливайте позиции в черновике и отправляйте готовое списание в журнал. Передача в 1С пока не выполняется.</p></div><span id="stateBadge" class="status">Подключение…</span></div>
  <p id="notice" class="notice" role="status">Открываю страницу и загружаю справочник номенклатуры…</p>
@@ -73,7 +77,7 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
   </fieldset>
   <datalist id="catalog"></datalist><datalist id="reasons"><option value="Порча"></option><option value="Брак"></option><option value="Просрочка"></option><option value="Недостача"></option><option value="Технологические потери"></option><option value="Питание персонала"></option><option value="Прочее"></option></datalist>
   <section class="card"><div class="toolbar"><button type="button" id="saveBtn">Сохранить черновик</button><button type="button" id="submitBtn" class="primary">Отправить в журнал</button><button type="button" id="printBtn" class="primary">Печать / PDF</button><button type="button" id="excelBtn">Скачать Excel</button><span id="catalogStatus" class="muted"></span></div><p id="actionStatus" class="notice" role="status">Сохраните черновик или отправьте списание в общий журнал администратора.</p><p class="muted">Выберите причину в каждой строке. Списания передаются в общую базу и доступны администратору. Отправленные документы нельзя редактировать.</p></section>
-  <section class="card" hidden aria-hidden="true"><div class="sectiontitle"><h2>Журнал списаний</h2><button id="reloadBtn" type="button">Обновить</button></div>
+  <section class="card" id="employeeJournalSection"><p class="muted">Здесь видны отправленные списания сотрудников «Колхоза» из общей базы и черновики, сохранённые с этого устройства. Из журнала можно открыть документ, распечатать его или выгрузить в Excel.</p><div class="sectiontitle"><h2>Журнал списаний</h2><button id="reloadBtn" type="button">Обновить</button></div>
    <div class="formgrid"><label>Статус<select id="statusFilter"><option value="">Все</option><option value="draft">Черновики</option><option value="submitted">Отправленные</option></select></label><label>Дата с<input id="dateFrom" type="date"></label><label>Дата по<input id="dateTo" type="date"></label></div>
    <div id="journal" class="empty">Загружаю журнал…</div><p id="journalCount" class="muted"></p>
   </section>
@@ -82,6 +86,6 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 <div id="printArea" aria-hidden="true"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-<script src="writeoffs.js?v=20261103-cloud-staff2"></script>
+<script src="writeoffs.js?v=20261103-staff-journal1"></script>
 <script src="writeoffs-print.js?v=20261103-a4-print1"></script>
 </body></html>
