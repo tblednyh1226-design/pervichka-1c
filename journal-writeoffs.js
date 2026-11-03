@@ -25,23 +25,30 @@ async function renderKolhozJournal(){
   card.insertBefore(button,dest);
  }
  dest.textContent='Загружаю списания «Колхоза»…';
- let cloud=[],warning='';
- try{
-  const {data:{session},error:authError}=await sb.auth.getSession();
-  if(!authError&&session){
-   const r=await sb.from('kolhoz_writeoffs')
-    .select('id,doc_date,shift,warehouse,status,items,created_at,updated_at')
-    .eq('organization_id',GENERAL_KOLHOZ_ORG_ID).order('created_at',{ascending:false}).limit(100);
-   if(r.error)throw r.error;
-   cloud=(r.data||[]).map(d=>({...d,_storage:'cloud'}));
-   const staff=await sb.from('kolhoz_staff_writeoffs')
-    .select('id,doc_date,shift,warehouse,status,items,created_at,updated_at')
-    .eq('organization_id',GENERAL_KOLHOZ_ORG_ID).order('created_at',{ascending:false}).limit(100);
-   if(staff.error)throw staff.error;
-   cloud.push(...(staff.data||[]).map(d=>({...d,_storage:'staff'})));
-  }
- }catch(e){warning='Не удалось получить облачные списания: '+(e.message||e)}
- const rows=[...generalJournalLocalWriteoffs(),...cloud];
+ let cloud=[],warnings=[];
+ const {data:{session},error:authError}=await sb.auth.getSession();
+ if(authError||!session){
+  dest.textContent='Для просмотра списаний сотрудников войдите в свой аккаунт Помогатора.';
+  return;
+ }
+ const sources=[
+  {table:'kolhoz_staff_writeoffs',label:'Сотрудники Колхоза',storage:'staff'},
+  {table:'kolhoz_writeoffs',label:'Списания из Помогатора',storage:'cloud'}
+ ];
+ const results=await Promise.allSettled(sources.map(async src=>{
+  const response=await sb.from(src.table)
+   .select('id,doc_date,shift,warehouse,status,items,created_at,updated_at')
+   .eq('organization_id',GENERAL_KOLHOZ_ORG_ID).order('created_at',{ascending:false}).limit(100);
+  if(response.error)throw response.error;
+  return (response.data||[]).map(doc=>({...doc,_storage:src.storage}));
+ }));
+ for(let i=0;i<results.length;i++){
+  const result=results[i];
+  if(result.status==='fulfilled')cloud.push(...result.value);
+  else warnings.push(sources[i].label+': '+(result.reason?.message||'Ошибка загрузки'));
+ }
+ const warning=warnings.length?'Не удалось прочитать часть документов: '+warnings.join('; '):'';
+ const rows=cloud;
  const unique=[...new Map(rows.map(x=>[x.id,x])).values()];
  unique.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
  if(!unique.length){
