@@ -310,7 +310,7 @@ function drawJournal(){
    +'<button data-action="copy" data-id="'+esc(d.id)+'">Создать копию</button>'
    +'<button data-action="excel" data-id="'+esc(d.id)+'">Excel</button>'
    +'<button data-action="print" data-id="'+esc(d.id)+'">Печать</button>'
-   +(!sent&&auth?'<button class="danger" data-action="delete" data-id="'+esc(d.id)+'">Удалить</button>':'')
+   +(!guestMode&&!sent&&auth?'<button class="danger" data-action="delete" data-id="'+esc(d.id)+'">Удалить</button>':'')
    +'</div></div>';
  }).join('');
 }
@@ -318,8 +318,32 @@ function drawJournal(){
 async function loadJournal(){
  if(!orgId)return;
  if(guestMode){
-  journalData=readLocalJournal().sort((a,b)=>String(b.doc_date).localeCompare(String(a.doc_date))||String(b.created_at).localeCompare(String(a.created_at))).slice(0,100);
-  drawJournal();return;
+  if(!staffAccessKey){
+   journalData=[];drawJournal();
+   $('journal').innerHTML='<p class="empty">Журнал доступен по ссылке сотрудника «Колхоза». Откройте ссылку, предоставленную администратором.</p>';
+   return;
+  }
+  $('journal').textContent='Получаю отправленные списания из общей базы…';
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),16000);
+  let response;
+  try{
+   response=await fetch(STAFF_WRITE_API,{
+    method:'POST',signal:controller.signal,
+    headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},
+    body:JSON.stringify({action:'list',access_key:staffAccessKey})
+   });
+  }finally{clearTimeout(timeout)}
+  const result=await response.json().catch(()=>({ok:false,error:'Неверный ответ сервера'}));
+  if(!response.ok||!result.ok)throw Error(result.error||('Ошибка журнала: '+response.status));
+  const sent=(Array.isArray(result.documents)?result.documents:[])
+   .filter(d=>d.status==='submitted').map(d=>({...d,created_by:null}));
+  const ownDrafts=readLocalJournal().filter(d=>d.status==='draft'&&getStaffWriter(d.id));
+  const rows=[...sent,...ownDrafts];
+  journalData=[...new Map(rows.map(d=>[d.id,d])).values()]
+   .sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||''))).slice(0,150);
+  drawJournal();
+  return;
  }
  let query=sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,items,status,created_by,created_at,updated_at,submitted_at').eq('organization_id',orgId);
  if($('statusFilter').value)query=query.eq('status',$('statusFilter').value);
@@ -490,4 +514,5 @@ $('printBtn').addEventListener('click',()=>printWriteoff());
 $('reloadBtn').addEventListener('click',()=>loadJournal().catch(e=>say('Ошибка журнала: '+e.message,'error')));
 for(const id of ['statusFilter','dateFrom','dateTo'])$(id).addEventListener('change',()=>loadJournal().catch(e=>say('Ошибка журнала: '+e.message,'error')));
 $('journal').addEventListener('click',onJournalClick);
+$('jumpJournalBtn').addEventListener('click',()=>document.getElementById('employeeJournalSection').scrollIntoView({behavior:'smooth',block:'start'}));
 init();
