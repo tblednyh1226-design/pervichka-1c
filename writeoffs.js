@@ -256,6 +256,7 @@ function drawJournal(){
    +'<div class="actions"><button data-action="open" data-id="'+esc(d.id)+'">'+(sent?'Посмотреть':(auth?'Открыть':'Посмотреть'))+'</button>'
    +'<button data-action="copy" data-id="'+esc(d.id)+'">Создать копию</button>'
    +'<button data-action="excel" data-id="'+esc(d.id)+'">Excel</button>'
+   +'<button data-action="print" data-id="'+esc(d.id)+'">Печать</button>'
    +(!sent&&auth?'<button class="danger" data-action="delete" data-id="'+esc(d.id)+'">Удалить</button>':'')
    +'</div></div>';
  }).join('');
@@ -279,7 +280,8 @@ async function loadJournal(){
 async function onJournalClick(e){
  const b=e.target.closest('button[data-action]');if(!b||busy)return;
  const doc=journalData.find(x=>x.id===b.dataset.id);if(!doc)return;
- if(b.dataset.action==='excel'){exportXlsx(doc);return}
+ if(b.dataset.action==='excel'){exportWriteoffStyled(doc);return}
+ if(b.dataset.action==='print'){printWriteoff(doc);return}
  if(b.dataset.action==='open'){
   if(!maybeLeave())return;
   fillDocument(doc);
@@ -387,7 +389,8 @@ for(const field of ['docDate','shift','warehouse'])$(field).addEventListener('ch
 $('newBtn').addEventListener('click',()=>newForm());
 $('saveBtn').addEventListener('click',saveDraft);
 $('submitBtn').addEventListener('click',submit);
-$('excelBtn').addEventListener('click',()=>exportXlsx());
+$('excelBtn').addEventListener('click',()=>exportWriteoffStyled());
+$('printBtn').addEventListener('click',()=>printWriteoff());
 $('reloadBtn').addEventListener('click',()=>loadJournal().catch(e=>say('Ошибка журнала: '+e.message,'error')));
 for(const id of ['statusFilter','dateFrom','dateTo'])$(id).addEventListener('change',()=>loadJournal().catch(e=>say('Ошибка журнала: '+e.message,'error')));
 $('journal').addEventListener('click',onJournalClick);
