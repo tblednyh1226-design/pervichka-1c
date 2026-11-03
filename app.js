@@ -58,7 +58,7 @@ function show(id){document.querySelectorAll('main>section').forEach(x=>x.hidden=
  if(typeof renderKolhozJournal==='function')renderKolhozJournal().catch(console.error);
  else {
   const script=document.createElement('script');
-  script.src='journal-writeoffs.js?v=20261103-single-journal1';
+  script.src='journal-writeoffs.js?v=20261103-staff-cloud1';
   script.onload=()=>renderKolhozJournal().catch(console.error);
   script.onerror=()=>{document.getElementById('kolhozUnifiedJournal').textContent='Не удалось загрузить журнал списаний.'};
   document.head.appendChild(script);
