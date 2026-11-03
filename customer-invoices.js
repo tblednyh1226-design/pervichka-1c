@@ -15,7 +15,7 @@ async function customerInvoiceSend(btn,buyer,lines,select){
  if(items.some(x=>!x.productId)){status.textContent='Сначала сопоставьте номенклатуру iiko: '+items.filter(x=>!x.productId).map(x=>x.name).slice(0,8).join(', ');return;}
  const key='pomogator-invoice-once:v1:'+pair.deviceId+':'+invoiceHash({buyer,date,store:store.id,counteragentId:counteragentId||'',items});
  if(invoiceSent.has(key)||localStorage.getItem(key)){status.textContent='Отправка этой накладной уже запускалась';return;}
- if(!confirm('Отправить расходную накладную '+buyer+' в iiko без проведения?\nКонтрагент: Покупатели+'\nДата: '+date+'\nПозиций: '+items.length+'\nПовторная отправка будет заблокирована.'))return;
+ if(!confirm('Отправить расходную накладную '+buyer+' в iiko без проведения?\nКонтрагент: Покупатели\nДата: '+date+'\nПозиций: '+items.length+'\nПовторная отправка будет заблокирована.'))return;
  invoiceSent.add(key);localStorage.setItem(key,'pending');btn.disabled=true;btn.textContent='Отправляется…';
  try{const res=await fetch(INVOICE_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},body:JSON.stringify({action:'upload',document:{type:'outgoingInvoice',status:'NEW',dateIncoming:date+'T16:00:00',storeId:store.id,counteragentId,comment:'Покупатель по плану: '+buyer,items:items.map(({productId,amount,price})=>({productId,amount,price}))}})});const data=await res.json();if(!res.ok||!data.ok||!data.accepted)throw Error(data.error||'Нет подтверждения iiko');localStorage.setItem(key,'confirmed:'+data.id);btn.textContent='Отправлено';status.textContent='iiko подтвердила накладную '+buyer+', ID '+data.id;}catch(e){btn.textContent='Отправка проверяется';status.textContent='Ошибка: '+String(e.message||e)+'. Повтор заблокирован — проверьте документы в iiko.';}
 }
@@ -45,7 +45,7 @@ function customerInvoicesPreview(){
   status.textContent='Сначала загрузите дневной план Excel и выберите лист.';return;
  }
  const norm=v=>String(v??'').toLocaleLowerCase('ru').replace(/ё/g,'е').replace(/[^a-zа-я0-9+]+/gi,' ').trim();
- const excludedHeadings=/^(?:всего|итого|сумма|раздача|правда(?:\\s|$)|бухара(?:\\s|$)|этм(?:\\s|$)|редмонд(?:\\s|$)|рэдмонд(?:\\s|$)|бестужевская(?:\\s|$)|модуль(?:\\s|$)|мега(?:\\s|$)|цена(?:\\s|$)|кол\\s*во|количество|выпечка|iiko(?:\\s|$)|айко(?:\\s|$)|номер(?:\\s|$)|наименование)/i;
+ const excludedHeadings=/^(?:всего|итого|сумма|раздача|правда(?:\s|$)|бухара(?:\s|$)|этм(?:\s|$)|редмонд(?:\s|$)|рэдмонд(?:\s|$)|бестужевская(?:\s|$)|модуль(?:\s|$)|мега(?:\s|$)|цена(?:\s|$)|кол\s*во|количество|выпечка|iiko(?:\s|$)|айко(?:\s|$)|номер(?:\s|$)|наименование)/i;
  const buyers=new Map(),unrecognized=[];
  (ctx.heads||[]).forEach((raw,col)=>{
   if(col<4)return;
@@ -81,7 +81,7 @@ function customerInvoicesPreview(){
    if(qty<=0)continue;
    const weight=String(row[2]??'').trim();
    const isLargePie=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(name)&&
-     !/пирож|мини[\\s-]*пирог|маленьк/iu.test(name);
+     !/пирож|мини[\s-]*пирог|маленьк/iu.test(name);
    const originalQty=qty;
    if(isLargePie)qty*=8;
    const price=number(row[3]);
@@ -114,7 +114,7 @@ function customerInvoicesPreview(){
   }
   const btn=document.createElement('button');
   btn.type='button';btn.textContent='Отправить в iiko';
-  btn.disabled=!invoiceCatalog?.stores?.some(x=>/бухара\\s*кухня/i.test(x.name))||!invoiceCatalog?.counteragents?.some(x=>String(x.name||'').trim().toLocaleLowerCase('ru')==='покупатели');
+  btn.disabled=!invoiceCatalog?.stores?.some(x=>/бухара\s*кухня/i.test(x.name))||!invoiceCatalog?.counteragents?.some(x=>String(x.name||'').trim().toLocaleLowerCase('ru')==='покупатели');
   btn.title=btn.disabled?'Загрузите склад Бухара кухня и контрагента «Покупатели» из iiko':'Создать непроведённую накладную на контрагента «Покупатели»';
   btn.style.cssText='background:#0878d9;color:white;border:0;border-radius:8px;padding:12px 16px;font-weight:600;cursor:pointer';
   btn.onclick=e=>{e.preventDefault();e.stopPropagation();customerInvoiceSend(btn,buyer,lines,details.querySelector('select'));};
