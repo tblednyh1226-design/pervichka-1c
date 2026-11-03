@@ -15,7 +15,7 @@ main{max-width:1180px;padding:18px 15px 70px;margin:auto}h1{font-size:24px;margi
 .formgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}label{display:flex;flex-direction:column;gap:5px;color:#44546b;font-size:13px;font-weight:600}
 input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;background:#fff;padding:10px;color:#1b2b40}input:focus,select:focus{outline:2px solid #bed4ff;border-color:#4d79bc}
 .toolbar{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.primary{background:#2563ae;color:white;border-color:#2563ae}.primary:hover{background:#174e90}.danger{color:#ad333d;border-color:#f2d5d8}.danger:hover{background:#fff2f3}.sectiontitle{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px}
-.tablewrap{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:730px}th{font-size:12px;text-align:left;color:#66778e;background:#f6f8fb}th,td{padding:8px 5px;border-bottom:1px solid #e9edf3}th:first-child,td:first-child{padding-left:10px}th:last-child,td:last-child{padding-right:10px}td input{padding:9px 7px}.item-name{min-width:225px}.item-qty{min-width:85px}.item-unit{min-width:70px}.item-reason{min-width:150px}.remove{border:0;color:#c74d53;padding:8px}.blockfoot{margin-top:12px}
+.tablewrap{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:730px}th{font-size:12px;text-align:left;color:#66778e;background:#f6f8fb}th,td{padding:8px 5px;border-bottom:1px solid #e9edf3}th:first-child,td:first-child{padding-left:10px}th:last-child,td:last-child{padding-right:10px}td input{padding:9px 7px}.item-name{min-width:295px}.item-qty{min-width:85px}.item-unit{min-width:70px}.item-reason{min-width:150px}.remove{border:0;color:#c74d53;padding:8px}.blockfoot{margin-top:12px}
 .notice{padding:11px 14px;border-radius:9px;background:#eef5fc;color:#254b75;line-height:1.5}.notice.error{background:#fff0f0;color:#a52732}.notice.success{background:#ecf8f0;color:#1d6b43}
 .journal-row{display:flex;gap:10px;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #edf0f6;flex-wrap:wrap}.journal-row b{display:block}.journal-row small{display:block;margin:5px 0}.tag{display:inline-block;border-radius:6px;padding:3px 7px;font-size:12px;background:#edf2fa;color:#3b536d}.tag.sent{background:#e7f6e9;color:#276c39}
 .actions{display:flex;gap:6px;flex-wrap:wrap}.actions button{padding:7px 10px}.empty{padding:16px 0;color:#6b7890}.counts{color:#64728a;font-weight:500;font-size:13px}a{color:#1d5d9f;text-decoration:none}
@@ -26,7 +26,7 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 <body>
 <header><div><b>Помогатор · Списания Колхоз</b><small>Учёт списаний и общий журнал</small></div><a href="./index.html">← В Помогатор</a></header>
 <main>
- <div class="top"><div><h1>Списание продукции</h1><p class="muted">Накапливайте позиции в черновике и отправляйте готовое списание в общий журнал. Отправка в 1С не выполняется.</p></div><span id="stateBadge" class="status">Подключение…</span></div>
+ <div class="top"><div><h1>Списание номенклатуры</h1><p class="muted">Накапливайте позиции в черновике и отправляйте готовое списание в общий журнал. Отправка в 1С не выполняется.</p></div><span id="stateBadge" class="status">Подключение…</span></div>
  <p id="notice" class="notice" role="status">Проверяю вход и справочник организации…</p>
  <section id="loginCard" class="card" hidden><h2>Войти в Помогатор</h2><p class="muted">Для сохранения документов в общем журнале используется учётная запись Помогатора.</p><form id="loginForm"><div class="formgrid"><label>Электронная почта<input id="loginEmail" type="email" autocomplete="username" required></label><label>Пароль<input id="loginPassword" type="password" autocomplete="current-password" required></label><label style="justify-content:end"><span>&nbsp;</span><button type="submit" class="primary" id="loginButton">Войти</button></label></div></form><p id="loginError" class="muted" role="status"></p></section>
  <div id="screen" hidden>
@@ -41,9 +41,10 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
    </fieldset>
   </section>
   <fieldset id="itemsFields">
-   <section class="card"><div class="sectiontitle"><h2>Сырьё <span id="count-raw" class="counts"></span></h2><button type="button" data-add="raw">+ Строка</button></div><div class="tablewrap"><table><thead><tr><th>Номенклатура</th><th>Кол-во</th><th>Ед.</th><th>Причина списания</th><th></th></tr></thead><tbody id="rows-raw"></tbody></table></div></section>
-   <section class="card"><div class="sectiontitle"><h2>Полуфабрикаты <span id="count-semi" class="counts"></span></h2><button type="button" data-add="semi">+ Строка</button></div><div class="tablewrap"><table><thead><tr><th>Номенклатура</th><th>Кол-во</th><th>Ед.</th><th>Причина списания</th><th></th></tr></thead><tbody id="rows-semi"></tbody></table></div></section>
-   <section class="card"><div class="sectiontitle"><h2>Блюда <span id="count-dish" class="counts"></span></h2><button type="button" data-add="dish">+ Строка</button></div><div class="tablewrap"><table><thead><tr><th>Номенклатура</th><th>Кол-во</th><th>Ед.</th><th>Причина списания</th><th></th></tr></thead><tbody id="rows-dish"></tbody></table></div></section>
+   <section class="card"><div class="sectiontitle"><h2>Позиции списания <span id="itemCount" class="counts"></span></h2><button type="button" id="addRowBtn">+ Добавить строку</button></div>
+    <p class="muted">10 строк для начала. Можно добавлять и удалять строки без ограничения по виду номенклатуры.</p>
+    <div class="tablewrap"><table><thead><tr><th>Номенклатура</th><th>Количество</th><th>Ед. изм.</th><th>Причина списания</th><th></th></tr></thead><tbody id="rows-all"></tbody></table></div>
+   </section>
   </fieldset>
   <datalist id="catalog"></datalist><datalist id="reasons"><option value="Порча"></option><option value="Брак"></option><option value="Просрочка"></option><option value="Недостача"></option><option value="Технологические потери"></option><option value="Питание персонала"></option><option value="Прочее"></option></datalist>
   <section class="card"><div class="toolbar"><button type="button" id="saveBtn">Сохранить черновик</button><button type="button" id="submitBtn" class="primary">Отправить в журнал</button><button type="button" id="excelBtn">Скачать Excel</button><span id="catalogStatus" class="muted"></span></div><p class="muted">Черновики видны в общем журнале и доступны для продолжения. Отправленные списания не редактируются; для исправлений создайте копию.</p></section>
@@ -55,5 +56,5 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-<script src="writeoffs.js?v=20261101-cloud-4"></script>
+<script src="writeoffs.js?v=20261103-flat10-1"></script>
 </body></html>
