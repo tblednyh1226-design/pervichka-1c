@@ -26,7 +26,13 @@ async function renderKolhozJournal(){
  }
  dest.textContent='Загружаю списания «Колхоза»…';
  let cloud=[],warnings=[];
- const {data:{session},error:authError}=await sb.auth.getSession();
+ let session=null,authError=null;
+ try{
+  const auth=await sb.auth.getSession();
+  session=auth.data?.session||null;authError=auth.error;
+ }catch(e){authError=e}
+ const panel=document.getElementById('journalAdminLoginPanel');
+ if(panel)panel.hidden=!!session;
  if(authError||!session){
   dest.textContent='Для просмотра списаний сотрудников войдите в свой аккаунт Помогатора.';
   return;
@@ -74,3 +80,24 @@ setInterval(()=>{
  const pane=document.getElementById('journal');
  if(pane&&!pane.hidden)renderKolhozJournal().catch(console.error);
 },30000);
+
+document.getElementById('journalAdminLoginForm')?.addEventListener('submit',async event=>{
+ event.preventDefault();
+ const submit=event.currentTarget.querySelector('button[type="submit"]');
+ const email=document.getElementById('journalAdminEmail').value.trim();
+ const password=document.getElementById('journalAdminPassword').value;
+ const status=document.getElementById('journalAdminLoginResult');
+ if(!email||!password)return;
+ if(submit)submit.disabled=true;
+ status.textContent='Проверяю учётную запись…';
+ try{
+  const {error}=await sb.auth.signInWithPassword({email,password});
+  if(error)throw error;
+  document.getElementById('journalAdminPassword').value='';
+  status.textContent='Вход выполнен, загружаю документы…';
+  await startApp();
+  show('journal');
+ }catch(e){
+  status.textContent='Не удалось войти: '+(e.message||e);
+ }finally{if(submit)submit.disabled=false}
+});
