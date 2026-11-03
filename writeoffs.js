@@ -346,36 +346,42 @@ function restore(){
  say('Восстановлен незавершённый черновик, в том числе записи из прежних трёх блоков. Сохраните его в журнал.');
  return true;
 }
+
 async function init(){
+ const login=$('loginCard');if(login)login.hidden=true;
  try{
-  const auth=await sb.auth.getSession();
-  if(auth.error)throw auth.error;
-  if(!auth.data.session){$('loginCard').hidden=false;say('Для работы с общим журналом войдите в Помогатор.','error');$('stateBadge').textContent='Нужен вход';return}
-  $('loginCard').hidden=true;
-  userId=auth.data.session.user.id;
-  const mr=await sb.from('workspace_members').select('workspace_id').eq('user_id',userId);
-  if(mr.error)throw mr.error;
-  if(!mr.data.length)throw new Error('Не найдено рабочее пространство. Откройте сначала главную страницу Помогатора.');
-  let cached={};try{cached=JSON.parse(localStorage.getItem('pervichka_workspace_v1')||'{}')}catch(_){}
-  workspaceId=(mr.data.find(x=>x.workspace_id===cached.id)||mr.data[0]).workspace_id;
-  const or=await sb.from('organizations').select('id,name').eq('workspace_id',workspaceId);
-  if(or.error)throw or.error;
-  const target=(or.data||[]).find(x=>/здобников|колхоз/i.test(x.name));
-  if(!target)throw new Error('В рабочем пространстве нет организации «Колхоз / ИП Здобникова». Добавьте или выберите её на главной странице.');
-  orgId=target.id;$('orgLabel').value=target.name;
+  let session=null;
+  try{const auth=await sb.auth.getSession();session=auth.data?.session||null}
+  catch(error){console.warn('Сессия недоступна, доступен локальный режим',error)}
+  if(session){
+   try{
+    userId=session.user.id;
+    const mr=await sb.from('workspace_members').select('workspace_id').eq('user_id',userId);
+    if(mr.error||!mr.data?.length)throw new Error('Нет рабочего пространства');
+    let cached={};try{cached=JSON.parse(localStorage.getItem('pervichka_workspace_v1')||'{}')}catch(_){}
+    workspaceId=(mr.data.find(x=>x.workspace_id===cached.id)||mr.data[0]).workspace_id;
+    const or=await sb.from('organizations').select('id,name').eq('workspace_id',workspaceId);
+    if(or.error)throw or.error;
+    const target=(or.data||[]).find(x=>/здобников|колхоз/i.test(x.name));
+    if(!target)throw new Error('Не найдена организация Колхоз');
+    orgId=target.id;$('orgLabel').value=target.name;
+    guestMode=false;
+   }catch(error){console.warn('Общий журнал недоступен, открываю локальный режим',error)}
+  }
+  if(!orgId){
+   guestMode=true;userId='guest';workspaceId='';orgId=GUEST_ORG_ID;
+   $('orgLabel').value='ИП Здобникова С. С.';
+  }
+  $('storageModeNotice').textContent=guestMode
+   ? 'Работа без входа. Черновики и журнал сохраняются только в этом браузере. На других устройствах они не появятся.'
+   : 'Действующая сессия Помогатора найдена. Документы сохраняются в общем облачном журнале.';
   $('screen').hidden=false;
   newForm(false);
-  await Promise.all([loadCatalog(),loadJournal()]);
-  if(!restore())say('Подключено к общей базе. Выберите склад и добавьте позиции списания.','success');
- }catch(e){console.error(e);say('Не удалось открыть списания: '+(e.message||e),'error');$('stateBadge').textContent='Ошибка подключения'}
+  const results=await Promise.allSettled([loadCatalog(),loadJournal()]);
+  const issues=results.filter(x=>x.status==='rejected').map(x=>x.reason?.message||'Ошибка получения данных');
+  if(!restore())say(issues.length?'Форма открыта. '+issues.join('; '):'Страница готова: '+(guestMode?'вход не требуется, журнал локальный.':'подключён общий журнал.'),issues.length?'error':'success');
+ }catch(e){console.error(e);say('Не удалось открыть списания: '+(e.message||e),'error');$('stateBadge').textContent='Ошибка'}
 }
-$('loginForm').addEventListener('submit',async(event)=>{
- event.preventDefault();
- const button=$('loginButton');button.disabled=true;$('loginError').textContent='Проверяю учётную запись…';
- try{const {error}=await sb.auth.signInWithPassword({email:$('loginEmail').value.trim(),password:$('loginPassword').value});if(error)throw error;
- $('loginError').textContent='';await init();
- }catch(e){$('loginError').textContent='Ошибка входа: '+(e.message||e)}finally{button.disabled=false}
-});
 $('addRowBtn').addEventListener('click',()=>{entries.push(blank());paintRows();persist()});
 for(const field of ['docDate','shift','warehouse'])$(field).addEventListener('change',persist);
 $('newBtn').addEventListener('click',()=>newForm());
