@@ -3,22 +3,23 @@ const $ = (id) => document.getElementById(id);
 const SUPABASE_URL = 'https://dwdunpyzcfdwokoczenl.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_6sFPuw3W1Zfqv9viN41TcQ_xeRhOEzw';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-const groups = [['raw','Сырьё'],['semi','Полуфабрикаты'],['dish','Блюда']];
-const groupTitle = Object.fromEntries(groups);
 let userId = '', workspaceId = '', orgId = '';
 let catalog = [], catalogByName = new Map(), currentId = null, revision = null, currentStatus = 'draft';
-let entries = {raw:[],semi:[],dish:[]}, journalData = [];
+let entries = [], journalData = [];
 let dirty = false, busy = false, loading = true, viewOnly = false;
 
-const blank = (group) => ({key: crypto.randomUUID(), group, nomenclature_id:null, code:'', name:'', qty:'', unit:'', reason:''});
+const blank = () => ({key: crypto.randomUUID(), nomenclature_id:null, code:'', name:'', qty:'', unit:'', reason:''});
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function today() {const d = new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')}
 function niceDate(s) {if(!s)return '—';const a=s.split('-');return a.length===3 ? a[2]+'.'+a[1]+'.'+a[0] : s}
 function say(message,kind='') {$('notice').textContent=message;$('notice').className='notice'+(kind?' '+kind:'')}
 function storeKey(){return 'kolhoz_writeoffs_unsaved_v2_'+userId+'_'+orgId}
-function resetEntries() {entries={raw:[],semi:[],dish:[]};for(const [group] of groups)for(let i=0;i<5;i++)entries[group].push(blank(group))}
-function lineCount(group){return entries[group].filter(r=>r.name.trim()).length}
-function repaintCounts(){for(const [group] of groups)$('count-'+group).textContent='· '+lineCount(group)+' заполнено'}
+
+function resetEntries(){entries=Array.from({length:10},()=>blank())}
+function repaintCounts(){
+ const filled=entries.filter(r=>String(r.name||'').trim()).length;
+ $('itemCount').textContent='· '+filled+' заполнено / '+entries.length+' строк';
+}
 function updateMode(){
  const sent=currentStatus==='submitted'||viewOnly;
  $('editorFields').disabled=sent;
@@ -30,9 +31,10 @@ function updateMode(){
  $('catalogStatus').textContent=catalog.length?'Справочник: '+catalog.length+' позиций':'Справочник пока пуст';
  repaintCounts();
 }
+
 function draftSnapshot(){
  return {id:currentId,revision,status:currentStatus,date:$('docDate').value,shift:$('shift').value,warehouse:$('warehouse').value,
-         entries:Object.fromEntries(groups.map(([g])=>[g,entries[g].map(x=>({...x}))]))};
+         entries:entries.map(x=>({...x}))};
 }
 function persist(){
  if(loading||currentStatus==='submitted'||!userId||!orgId)return;
@@ -41,10 +43,29 @@ function persist(){
  repaintCounts();
 }
 function clearLocal(){try{localStorage.removeItem(storeKey())}catch(_){}}
-function paintGroup(group){
- const tbody=$('rows-'+group);
- tbody.replaceChildren();
- entries[group].forEach((line)=>{
+
+function applyCatalogMatch(line,tr){
+  line.nomenclature_id=null;line.code='';
+  const matches=catalogByName.get(line.name.trim().toLocaleLowerCase('ru').replace(/ё/g,'е'))||[];
+  if(!matches.length){line.unit='';tr.querySelector('[data-field="unit"]').value='';return}
+  const units=[...new Set(matches.map(x=>x.unit||''))];
+  if(units.length===1){
+    line.nomenclature_id=matches[0].id;
+    line.unit=units[0];
+    tr.querySelector('[data-field="unit"]').value=line.unit;
+    tr.querySelector('[data-field="name"]').title='';
+  }else{
+    const currentUnit=line.unit;
+    const selected=matches.find(x=>x.unit===currentUnit);
+    line.nomenclature_id=selected?.id||null;
+    line.unit=selected?.unit||'';
+    tr.querySelector('[data-field="unit"]').value=line.unit;
+    tr.querySelector('[data-field="name"]').title='Есть одинаковые названия с разными единицами: '+units.join(', ')+'. Уточните единицу измерения.';
+  }
+}
+function paintRows(){
+ const tbody=$('rows-all');tbody.replaceChildren();
+ entries.forEach((line)=>{
   const tr=document.createElement('tr');
   tr.innerHTML='<td><input class="item-name" data-field="name" list="catalog" placeholder="Начните вводить название" autocomplete="off"></td>'
    +'<td><input class="item-qty" data-field="qty" type="text" inputmode="decimal" placeholder="0,000"></td>'
@@ -53,27 +74,25 @@ function paintGroup(group){
    +'<td><button type="button" class="remove" title="Удалить строку" aria-label="Удалить строку">✕</button></td>';
   for(const field of ['name','qty','unit','reason']){
    const input=tr.querySelector('[data-field="'+field+'"]');
-   input.value=line[field]||'';
+   input.value=line[field]??'';
    input.addEventListener('input',()=>{
     line[field]=input.value;
-    if(field==='name'){
-     line.nomenclature_id=null;line.code='';
-     const match=catalogByName.get(line.name.trim().toLocaleLowerCase('ru'));
-     if(match){line.nomenclature_id=match.id;line.code=match.code||'';line.unit=match.unit||line.unit||'';tr.querySelector('[data-field="unit"]').value=line.unit}
+    if(field==='name')applyCatalogMatch(line,tr);
+    if(field==='unit'){
+      const matches=catalogByName.get(line.name.trim().toLocaleLowerCase('ru').replace(/ё/g,'е'))||[];
+      line.nomenclature_id=matches.find(x=>x.unit.trim()===line.unit.trim())?.id||null;
     }
     persist();
    });
-   if(field==='name') input.addEventListener('change',()=>{
-    const match=catalogByName.get(line.name.trim().toLocaleLowerCase('ru'));
-    if(match){line.nomenclature_id=match.id;line.code=match.code||'';line.unit=match.unit||line.unit||'';tr.querySelector('[data-field="unit"]').value=line.unit;persist()}
-   });
   }
-  tr.querySelector('.remove').addEventListener('click',()=>{entries[group]=entries[group].filter(r=>r.key!==line.key);paintGroup(group);persist()});
+  tr.querySelector('.remove').addEventListener('click',()=>{
+    entries=entries.filter(r=>r.key!==line.key);paintRows();persist();
+  });
   tbody.appendChild(tr);
  });
  repaintCounts();
 }
-function paintAll(){for(const [group] of groups)paintGroup(group);updateMode()}
+function paintAll(){paintRows();updateMode()}
 function newForm(ask=true){
  if(ask&&dirty&&!confirm('Есть несохранённые изменения. Создать новый документ?'))return;
  if(ask||!loading)clearLocal();loading=true;
@@ -83,20 +102,21 @@ function newForm(ask=true){
  say('Новый документ. Можно заполнять постепенно; изменения временно сохраняются и в этом браузере.');
  window.scrollTo({top:0,behavior:'smooth'});
 }
+
 function collectRows(strict){
  const out=[];
- for(const [group] of groups)for(const r of entries[group]){
-  const name=r.name.trim(),reason=r.reason.trim(),unit=r.unit.trim(),qtyText=String(r.qty||'').trim();
+ for(const r of entries){
+  const name=String(r.name||'').trim(),reason=String(r.reason||'').trim(),unit=String(r.unit||'').trim(),qtyText=String(r.qty||'').trim();
   const touched=name||reason||unit||qtyText;
   if(!touched)continue;
   const quantity=Number(qtyText.replace(',','.'));
   if(strict){
-   if(!name)throw new Error('Укажите номенклатуру в разделе «'+groupTitle[group]+'».');
+   if(!name)throw new Error('Укажите наименование в строке списания.');
    if(!qtyText||!Number.isFinite(quantity)||quantity<=0)throw new Error('Для «'+name+'» укажите количество больше нуля.');
-   if(!reason)throw new Error('Для «'+name+'» укажите причину списания.');
    if(!unit)throw new Error('Для «'+name+'» укажите единицу измерения.');
+   if(!reason)throw new Error('Для «'+name+'» укажите причину списания.');
   }
-  out.push({group,nomenclature_id:r.nomenclature_id||null,code:r.code||'',name,qty:qtyText,unit,reason});
+  out.push({nomenclature_id:r.nomenclature_id||null,code:r.code||'',name,qty:qtyText,unit,reason});
  }
  return out;
 }
@@ -148,16 +168,14 @@ async function submit(){
   await loadJournal();
  });
 }
+
 function fillDocument(doc,copy=false){
  clearLocal();loading=true;
- currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;currentStatus=copy?'draft':doc.status;viewOnly=!copy&&doc.status==='draft'&&doc.created_by!==userId;dirty=false;
+ currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;currentStatus=copy?'draft':doc.status;
+ viewOnly=!copy&&doc.status==='draft'&&doc.created_by!==userId;dirty=false;
  $('docDate').value=doc.doc_date||today();$('shift').value=doc.shift||'';$('warehouse').value=doc.warehouse||'';
- entries={raw:[],semi:[],dish:[]};
- for(const item of (doc.items||[])){
-  if(!entries[item.group])continue;
-  entries[item.group].push({...blank(item.group),...item,key:crypto.randomUUID()});
- }
- if(currentStatus==='draft')for(const [group] of groups)while(entries[group].length<5)entries[group].push(blank(group));
+ entries=(Array.isArray(doc.items)?doc.items:[]).map(item=>({...blank(),...item,key:crypto.randomUUID()}));
+ if(currentStatus==='draft')while(entries.length<10)entries.push(blank());
  paintAll();loading=false;
  if(copy){persist();say('Создана редактируемая копия документа. Сохраните её как новый черновик.');}
  else say(currentStatus==='submitted'?'Просмотр отправленного списания (только чтение).':'Черновик открыт для редактирования.');
@@ -167,15 +185,16 @@ function maybeLeave(){
  if(dirty&&!confirm('Есть несохранённые изменения. Открыть другой документ?'))return false;
  return true;
 }
+
 function exportXlsx(doc){
- if(typeof XLSX==='undefined'){say('Не загружена библиотека Excel. Попробуйте обновить страницу.','error');return}
+ if(typeof XLSX==='undefined'){say('Не загружена библиотека Excel. Обновите страницу.','error');return}
  let items;
  try{items=doc?doc.items:collectRows(false)}catch(e){say(e.message,'error');return}
  const info=doc||{doc_date:$('docDate').value,shift:$('shift').value,warehouse:$('warehouse').value,status:currentStatus};
- const rows=[['Дата','Смена','Склад','Раздел','Номенклатура','Код 1С','Количество','Ед. изм.','Причина','Статус']];
- for(const item of items)rows.push([niceDate(info.doc_date),info.shift||'',info.warehouse||'',groupTitle[item.group]||item.group,item.name,item.code||'',String(item.qty).replace(',','.'),item.unit,item.reason,info.status==='submitted'?'Отправлено':'Черновик']);
+ const rows=[['Дата','Смена','Склад','Номенклатура','Код 1С','Количество','Ед. изм.','Причина','Статус']];
+ for(const item of (items||[]))rows.push([niceDate(info.doc_date),info.shift||'',info.warehouse||'',item.name,item.code||'',String(item.qty).replace(',','.'),item.unit,item.reason,info.status==='submitted'?'Отправлено':'Черновик']);
  const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(rows);
- ws['!cols']=[{wch:14},{wch:12},{wch:20},{wch:19},{wch:49},{wch:14},{wch:14},{wch:13},{wch:23},{wch:14}];
+ ws['!cols']=[{wch:14},{wch:12},{wch:21},{wch:49},{wch:14},{wch:14},{wch:13},{wch:23},{wch:14}];
  XLSX.utils.book_append_sheet(wb,ws,'Списание');
  XLSX.writeFile(wb,'Списание_Колхоз_'+(info.doc_date||today())+'.xlsx');
 }
@@ -228,20 +247,32 @@ async function onJournalClick(e){
   });
  }
 }
+
 async function loadCatalog(){
  catalog=[];let from=0;
  while(from<15000){
-  const r=await sb.from('nomenclature').select('id,code,name,unit,group_name').eq('organization_id',orgId).eq('is_active',true).order('name').range(from,from+999);
+  const r=await sb.from('kolhoz_writeoff_nomenclature').select('id,source_row,name,unit').eq('organization_id',orgId).order('source_row').range(from,from+999);
   if(r.error)throw r.error;
   catalog.push(...(r.data||[]));
   if((r.data||[]).length<1000)break;
   from+=1000;
  }
- catalogByName=new Map(catalog.map(n=>[n.name.trim().toLocaleLowerCase('ru'),n]));
+ catalogByName=new Map();
+ for(const n of catalog){
+  const key=n.name.trim().toLocaleLowerCase('ru').replace(/ё/g,'е');
+  const matches=catalogByName.get(key)||[];
+  matches.push(n);
+  catalogByName.set(key,matches);
+ }
  const list=$('catalog');list.replaceChildren();
- for(const n of catalog){const opt=document.createElement('option');opt.value=n.name;if(n.unit)opt.label=n.unit;list.appendChild(opt)}
+ for(const n of catalog){
+  const opt=document.createElement('option');
+  opt.value=n.name;if(n.unit)opt.label='Ед. изм.: '+n.unit;
+  list.appendChild(opt);
+ }
  updateMode();
 }
+
 function restore(){
  let raw=null;
  try{raw=JSON.parse(localStorage.getItem(storeKey())||'null')}catch(_){}
@@ -249,14 +280,15 @@ function restore(){
  loading=true;
  currentId=raw.id||null;revision=raw.revision||null;currentStatus='draft';viewOnly=false;
  $('docDate').value=raw.date||today();$('shift').value=raw.shift||'';$('warehouse').value=raw.warehouse||'';
- entries={raw:[],semi:[],dish:[]};
- for(const [g] of groups){
-  const stored=Array.isArray(raw.entries[g])?raw.entries[g]:[];
-  entries[g]=stored.map(x=>({...blank(g),...x,key:crypto.randomUUID()}));
-  while(entries[g].length<5)entries[g].push(blank(g));
+ let saved=[];
+ if(Array.isArray(raw.entries))saved=raw.entries;
+ else if(typeof raw.entries==='object'){
+   for(const g of ['raw','semi','dish'])if(Array.isArray(raw.entries[g]))saved.push(...raw.entries[g]);
  }
+ entries=saved.map(x=>({...blank(),...x,key:crypto.randomUUID()}));
+ while(entries.length<10)entries.push(blank());
  dirty=true;paintAll();loading=false;
- say('Восстановлено незавершённое заполнение из этого браузера. Нажмите «Сохранить черновик», чтобы запись появилась в общем журнале.');
+ say('Восстановлен незавершённый черновик, в том числе записи из прежних трёх блоков. Сохраните его в журнал.');
  return true;
 }
 async function init(){
@@ -289,7 +321,7 @@ $('loginForm').addEventListener('submit',async(event)=>{
  $('loginError').textContent='';await init();
  }catch(e){$('loginError').textContent='Ошибка входа: '+(e.message||e)}finally{button.disabled=false}
 });
-document.querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click',()=>{const group=b.dataset.add;entries[group].push(blank(group));paintGroup(group);persist()}));
+$('addRowBtn').addEventListener('click',()=>{entries.push(blank());paintRows();persist()});
 for(const field of ['docDate','shift','warehouse'])$(field).addEventListener('change',persist);
 $('newBtn').addEventListener('click',()=>newForm());
 $('saveBtn').addEventListener('click',saveDraft);
