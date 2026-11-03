@@ -56,6 +56,8 @@ function customerInvoicesPreview(){
   if(col<4)return;
   const heading=String(raw??'').trim(),key=norm(heading);
   if(!heading||excludedHeadings.test(key))return;
+  // In the new plan, the row above names marks outlets; blank means external buyer.
+  if(ctx.hasClassification&&String(ctx.classification?.[col]??'').trim())return;
   // Grand Capital day and night are summed into one invoice.
   const grandCapital=/^гранд капитал(?: ночь)?$/.test(key);
   const buyer=grandCapital?'Гранд Капитал':heading;
