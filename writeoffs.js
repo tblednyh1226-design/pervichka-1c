@@ -468,7 +468,16 @@ async function init(){
     if(linked){fillDocument(linked);say('Документ открыт из общего журнала. Доступны печать и Excel.','success')}
     else say('Документ не найден. Возможно, он удалён или недоступен вашему аккаунту.','error');
    }
-  }else if(!restore())say(issues.length?'Форма открыта. '+issues.join('; '):'Страница готова: '+(guestMode?'передача в общий журнал '+(staffAccessKey?'подключена.':'ожидает ссылку сотрудника.'):'подключён общий журнал.'),issues.length?'error':'success');
+  }else if(!restore()){
+   const lastStaffDraft=guestMode&&staffAccessKey
+    ?readLocalJournal().filter(x=>x.status==='draft'&&getStaffWriter(x.id))
+      .sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||'')))[0]
+    :null;
+   if(lastStaffDraft){
+    fillDocument(lastStaffDraft);
+    say('Восстановлен последний сохранённый в общей базе черновик. Можно продолжать заполнение.','success');
+   }else say(issues.length?'Форма открыта. '+issues.join('; '):'Страница готова: '+(guestMode?'передача в общий журнал '+(staffAccessKey?'подключена.':'ожидает ссылку сотрудника.'):'подключён общий журнал.'),issues.length?'error':'success');
+  }
  }catch(e){console.error(e);say('Не удалось открыть списания: '+(e.message||e),'error');$('stateBadge').textContent='Ошибка'}
 }
 $('addRowBtn').addEventListener('click',()=>{entries.push(blank());paintRows();persist()});
