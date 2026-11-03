@@ -16,7 +16,7 @@ const blank = () => ({key: crypto.randomUUID(), nomenclature_id:null, code:'', n
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function today() {const d = new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')}
 function niceDate(s) {if(!s)return '—';const a=s.split('-');return a.length===3 ? a[2]+'.'+a[1]+'.'+a[0] : s}
-function say(message,kind='') {$('notice').textContent=message;$('notice').className='notice'+(kind?' '+kind:'')}
+function say(message,kind='') {const top=$('notice');top.textContent=message;top.className='notice'+(kind?' '+kind:'');const beside=$('actionStatus');if(beside){beside.textContent=message;beside.className='notice'+(kind?' '+kind:'')}}
 function storeKey(){return 'kolhoz_writeoffs_unsaved_v2_'+userId+'_'+orgId}
 
 function resetEntries(){entries=Array.from({length:10},()=>blank())}
