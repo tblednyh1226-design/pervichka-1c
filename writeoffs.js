@@ -141,19 +141,51 @@ async function withBusy(fn){
  try{await fn()}catch(e){console.error(e);say('Ошибка: '+(e.message||e),'error')}
  finally{busy=false;updateMode()}
 }
+
+function readLocalJournal(){
+ try{const docs=JSON.parse(localStorage.getItem(GUEST_JOURNAL_KEY)||'[]');return Array.isArray(docs)?docs:[]}
+ catch(e){console.warn('Локальный журнал недоступен',e);return []}
+}
+function upsertLocalDocument(payload,status){
+ const journal=readLocalJournal(),stamp=new Date().toISOString();
+ let doc;
+ if(currentId){
+  const index=journal.findIndex(x=>x.id===currentId);
+  if(index<0)throw new Error('Локальный черновик не найден. Создайте копию.');
+  const prev=journal[index];
+  if(prev.status!=='draft'||prev.updated_at!==revision)throw new Error('Черновик уже изменён или отправлен.');
+  doc={...prev,...payload,status,updated_at:stamp,submitted_at:status==='submitted'?stamp:null};
+  journal[index]=doc;
+ }else{
+  doc={id:crypto.randomUUID(),workspace_id:null,organization_id:orgId,
+    created_by:userId,created_at:stamp,updated_at:stamp,
+    submitted_at:status==='submitted'?stamp:null,...payload,status};
+  journal.push(doc);
+ }
+ localStorage.setItem(GUEST_JOURNAL_KEY,JSON.stringify(journal));
+ return doc;
+}
+function deleteLocalDocument(id){
+ const docs=readLocalJournal(),doc=docs.find(d=>d.id===id);
+ if(!doc||doc.status!=='draft')throw new Error('Можно удалить только локальный черновик.');
+ localStorage.setItem(GUEST_JOURNAL_KEY,JSON.stringify(docs.filter(d=>d.id!==id)));
+}
 async function saveDraft(){
  if(currentStatus==='submitted'||viewOnly)return;
  await withBusy(async()=>{
   const payload=headerPayload(false);
-  let result;
-  if(currentId){
-   result=await sb.from('kolhoz_writeoffs').update(payload).eq('id',currentId).eq('status','draft').eq('updated_at',revision).select('*').single();
+  let data;
+  if(guestMode){
+   data=upsertLocalDocument(payload,'draft');
   }else{
-   result=await sb.from('kolhoz_writeoffs').insert({...payload,workspace_id:workspaceId,organization_id:orgId,created_by:userId,status:'draft'}).select('*').single();
+   const result=currentId
+    ? await sb.from('kolhoz_writeoffs').update(payload).eq('id',currentId).eq('status','draft').eq('updated_at',revision).select('*').single()
+    : await sb.from('kolhoz_writeoffs').insert({...payload,workspace_id:workspaceId,organization_id:orgId,created_by:userId,status:'draft'}).select('*').single();
+   if(result.error)throw new Error(result.error.code==='PGRST116'?'Черновик уже изменён или отправлен. Обновите журнал.':result.error.message);
+   data=result.data;
   }
-  if(result.error)throw new Error(result.error.code==='PGRST116'?'Черновик уже изменён или отправлен. Обновите журнал.':result.error.message);
-  currentId=result.data.id;revision=result.data.updated_at;dirty=false;clearLocal();
-  say('Черновик сохранён в общей базе. Его можно открыть из журнала и продолжить позднее.','success');
+  currentId=data.id;revision=data.updated_at;dirty=false;clearLocal();
+  say(guestMode?'Черновик сохранён в этом браузере. Он не виден на других устройствах.':'Черновик сохранён в общей базе. Его можно открыть из журнала.','success');
   await loadJournal();
  });
 }
@@ -161,17 +193,21 @@ async function submit(){
  if(currentStatus==='submitted'||viewOnly)return;
  let payload;
  try{payload=headerPayload(true)}catch(e){say(e.message,'error');return}
- if(!confirm('Отправить списание в общий журнал? После отправки его нельзя будет редактировать. В 1С документ не отправляется.'))return;
+ const localMessage=guestMode?' Списание сохранится в журнале только этого браузера.':'';
+ if(!confirm('Отправить списание в журнал? После отправки его нельзя редактировать. В 1С документ не отправляется.'+localMessage))return;
  await withBusy(async()=>{
-  let result;
-  if(currentId){
-   result=await sb.from('kolhoz_writeoffs').update({...payload,status:'submitted'}).eq('id',currentId).eq('status','draft').eq('updated_at',revision).select('*').single();
+  let data;
+  if(guestMode){
+   data=upsertLocalDocument(payload,'submitted');
   }else{
-   result=await sb.from('kolhoz_writeoffs').insert({...payload,status:'submitted',workspace_id:workspaceId,organization_id:orgId,created_by:userId}).select('*').single();
+   const result=currentId
+    ? await sb.from('kolhoz_writeoffs').update({...payload,status:'submitted'}).eq('id',currentId).eq('status','draft').eq('updated_at',revision).select('*').single()
+    : await sb.from('kolhoz_writeoffs').insert({...payload,status:'submitted',workspace_id:workspaceId,organization_id:orgId,created_by:userId}).select('*').single();
+   if(result.error)throw new Error(result.error.code==='PGRST116'?'Документ уже изменён или отправлен. Обновите журнал.':result.error.message);
+   data=result.data;
   }
-  if(result.error)throw new Error(result.error.code==='PGRST116'?'Документ уже изменён или отправлен. Обновите журнал.':result.error.message);
-  currentId=result.data.id;revision=result.data.updated_at;currentStatus='submitted';dirty=false;clearLocal();
-  say('Списание отправлено в общий журнал и защищено от изменений. Для исправлений используйте «Создать копию».','success');
+  currentId=data.id;revision=data.updated_at;currentStatus='submitted';dirty=false;clearLocal();
+  say(guestMode?'Списание сохранено в локальном журнале и закрыто для изменений.':'Списание отправлено в общий журнал и защищено от изменений.','success');
   await loadJournal();
  });
 }
@@ -224,8 +260,13 @@ function drawJournal(){
    +'</div></div>';
  }).join('');
 }
+
 async function loadJournal(){
  if(!orgId)return;
+ if(guestMode){
+  journalData=readLocalJournal().sort((a,b)=>String(b.doc_date).localeCompare(String(a.doc_date))||String(b.created_at).localeCompare(String(a.created_at))).slice(0,100);
+  drawJournal();return;
+ }
  let query=sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,items,status,created_by,created_at,updated_at,submitted_at').eq('organization_id',orgId);
  if($('statusFilter').value)query=query.eq('status',$('statusFilter').value);
  if($('dateFrom').value)query=query.gte('doc_date',$('dateFrom').value);
@@ -234,6 +275,7 @@ async function loadJournal(){
  if(r.error)throw r.error;
  journalData=r.data||[];drawJournal();
 }
+
 async function onJournalClick(e){
  const b=e.target.closest('button[data-action]');if(!b||busy)return;
  const doc=journalData.find(x=>x.id===b.dataset.id);if(!doc)return;
@@ -247,8 +289,8 @@ async function onJournalClick(e){
  if(b.dataset.action==='delete'){
   if(!confirm('Удалить черновик от '+niceDate(doc.doc_date)+'? Действие необратимо.'))return;
   await withBusy(async()=>{
-   const r=await sb.from('kolhoz_writeoffs').delete().eq('id',doc.id).eq('status','draft');
-   if(r.error)throw r.error;
+   if(guestMode){deleteLocalDocument(doc.id)}
+   else {const r=await sb.from('kolhoz_writeoffs').delete().eq('id',doc.id).eq('status','draft');if(r.error)throw r.error;}
    if(currentId===doc.id)newForm(false);
    say('Черновик удалён из журнала.','success');await loadJournal();
   });
