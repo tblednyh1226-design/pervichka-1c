@@ -6,6 +6,10 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const GUEST_ORG_ID='3d89b13c-28e9-4cb8-a439-407c6ecaac22';
 const GUEST_JOURNAL_KEY='kolhoz_writeoffs_local_journal_v1';
 const GUEST_CATALOG_URL=SUPABASE_URL+'/functions/v1/kolhoz-writeoffs-catalog';
+const STAFF_WRITE_API=SUPABASE_URL+'/functions/v1/kolhoz-staff-writeoffs';
+const STAFF_ACCESS_STORAGE='kolhoz_staff_access_v1';
+const STAFF_WRITER_PREFIX='kolhoz_staff_writer_v1_';
+let staffAccessKey='',writerSecret='';
 const REASONS=['Порча','Бракераж','Брак','Служебное питание','Возврат от покупателя','Прочее','Срок годности'];
 let userId = '', workspaceId = '', orgId = '';
 let catalog = [], catalogByName = new Map(), currentId = null, revision = null, currentStatus = 'draft';
@@ -28,10 +32,11 @@ function updateMode(){
  const sent=currentStatus==='submitted'||viewOnly;
  $('editorFields').disabled=sent;
  $('itemsFields').disabled=sent;
- $('saveBtn').disabled=sent||busy;
- $('submitBtn').disabled=sent||busy;
+ const needsStaffLink=guestMode&&!staffAccessKey;
+ $('saveBtn').disabled=sent||busy||needsStaffLink;
+ $('submitBtn').disabled=sent||busy||needsStaffLink;
  $('submitBtn').textContent=sent?'Уже отправлено':'Отправить в журнал';
- $('stateBadge').textContent=(guestMode?'Локально · ':'')+(viewOnly?'Черновик · просмотр':(currentStatus==='submitted'?'Отправлено':(currentId?'Черновик в журнале':'Новый черновик')));
+ $('stateBadge').textContent=(guestMode?(staffAccessKey?'Общая база · ':'Нужна ссылка · '):'')+(viewOnly?'Черновик · просмотр':(currentStatus==='submitted'?'Отправлено':(currentId?'Черновик в журнале':'Новый черновик')));
  $('catalogStatus').textContent=catalog.length?'Справочник: '+catalog.length+' позиций':'Справочник пока пуст';
  repaintCounts();
 }
@@ -103,7 +108,7 @@ function paintAll(){paintRows();updateMode()}
 function newForm(ask=true){
  if(ask&&dirty&&!confirm('Есть несохранённые изменения. Создать новый документ?'))return;
  if(ask||!loading)clearLocal();loading=true;
- currentId=null;revision=null;currentStatus='draft';viewOnly=false;dirty=false;
+ currentId=null;revision=null;writerSecret='';currentStatus='draft';viewOnly=false;dirty=false;
  $('docDate').value=today();$('shift').value='';$('warehouse').value='';
  resetEntries();paintAll();loading=false;
  say('Новый документ. Можно заполнять постепенно; изменения временно сохраняются и в этом браузере.');
@@ -142,6 +147,54 @@ async function withBusy(fn){
  finally{busy=false;updateMode()}
 }
 
+function readStaffAccessKey(){
+ const raw=new URLSearchParams(location.hash.slice(1)).get('staff')||'';
+ if(/^[A-Za-z0-9_-]{40,100}$/.test(raw)){
+  try{localStorage.setItem(STAFF_ACCESS_STORAGE,raw)}catch(_){}
+  return raw;
+ }
+ let saved='';
+ try{saved=localStorage.getItem(STAFF_ACCESS_STORAGE)||''}catch(_){}
+ return /^[A-Za-z0-9_-]{40,100}$/.test(saved)?saved:'';
+}
+function getStaffWriter(id){
+ if(!id)return '';
+ try{return localStorage.getItem(STAFF_WRITER_PREFIX+id)||''}catch(_){return ''}
+}
+function makeStaffWriter(){
+ const bytes=crypto.getRandomValues(new Uint8Array(32));
+ return Array.from(bytes).map(n=>n.toString(16).padStart(2,'0')).join('');
+}
+async function writeStaffToCloud(payload,status){
+ if(!staffAccessKey)throw Error('Для сохранения в общую базу нужна новая ссылка сотрудника. Обратитесь к администратору.');
+ if(!writerSecret)writerSecret=currentId?getStaffWriter(currentId):'';
+ if(!writerSecret)writerSecret=makeStaffWriter();
+ const olderId=currentId;
+ const cloudId=currentId&&getStaffWriter(currentId)?currentId:null;
+ const ctl=new AbortController();
+ const timer=setTimeout(()=>ctl.abort(),18000);
+ let response;
+ try {
+  response=await fetch(STAFF_WRITE_API,{
+   method:'POST',signal:ctl.signal,
+   headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY},
+   body:JSON.stringify({access_key:staffAccessKey,writer_secret:writerSecret,document_id:cloudId,
+     revision:cloudId?revision:null,payload:{...payload,status}})
+  });
+ }finally{clearTimeout(timer)}
+ const reply=await response.json().catch(()=>({ok:false,error:'Неверный ответ сервера'}));
+ if(!response.ok||!reply.ok)throw Error(reply.error||('Ошибка сохранения: HTTP '+response.status));
+ const data=reply.document;
+ if(!data?.id||!data?.updated_at)throw Error('Сервер не подтвердил сохранение документа');
+ try{
+  localStorage.setItem(STAFF_WRITER_PREFIX+data.id,writerSecret);
+  const docs=readLocalJournal().filter(d=>d.id!==olderId&&d.id!==data.id);
+  docs.push({id:data.id,organization_id:orgId,created_by:'guest',...data});
+  localStorage.setItem(GUEST_JOURNAL_KEY,JSON.stringify(docs));
+ }catch(e){console.warn('Документ есть в облаке, но локальная копия не сохранилась',e)}
+ return data;
+}
+
 function readLocalJournal(){
  try{const docs=JSON.parse(localStorage.getItem(GUEST_JOURNAL_KEY)||'[]');return Array.isArray(docs)?docs:[]}
  catch(e){console.warn('Локальный журнал недоступен',e);return []}
@@ -176,7 +229,7 @@ async function saveDraft(){
   const payload=headerPayload(false);
   let data;
   if(guestMode){
-   data=upsertLocalDocument(payload,'draft');
+   data=await writeStaffToCloud(payload,'draft');
   }else{
    const result=currentId
     ? await sb.from('kolhoz_writeoffs').update(payload).eq('id',currentId).eq('status','draft').eq('updated_at',revision).select('*').single()
@@ -185,7 +238,7 @@ async function saveDraft(){
    data=result.data;
   }
   currentId=data.id;revision=data.updated_at;dirty=false;clearLocal();
-  say(guestMode?'Черновик сохранён в этом браузере. Он не виден на других устройствах.':'Черновик сохранён в общей базе. Его можно открыть из журнала.','success');
+  say('Черновик сохранён в общей базе. Он доступен администратору в Помогаторе.','success');
   await loadJournal();
  });
 }
@@ -193,12 +246,12 @@ async function submit(){
  if(currentStatus==='submitted'||viewOnly)return;
  let payload;
  try{payload=headerPayload(true)}catch(e){say(e.message,'error');return}
- const localMessage=guestMode?' Списание сохранится в журнале только этого браузера.':'';
+ const localMessage=guestMode?' Списание появится в общем журнале администратора.':'';
  if(!confirm('Отправить списание в журнал? После отправки его нельзя редактировать. В 1С документ не отправляется.'+localMessage))return;
  await withBusy(async()=>{
   let data;
   if(guestMode){
-   data=upsertLocalDocument(payload,'submitted');
+   data=await writeStaffToCloud(payload,'submitted');
   }else{
    const result=currentId
     ? await sb.from('kolhoz_writeoffs').update({...payload,status:'submitted'}).eq('id',currentId).eq('status','draft').eq('updated_at',revision).select('*').single()
@@ -207,14 +260,14 @@ async function submit(){
    data=result.data;
   }
   currentId=data.id;revision=data.updated_at;currentStatus='submitted';dirty=false;clearLocal();
-  say(guestMode?'Списание сохранено в локальном журнале и закрыто для изменений.':'Списание отправлено в общий журнал и защищено от изменений.','success');
+  say('Списание отправлено в общий журнал и защищено от изменений.','success');
   await loadJournal();
  });
 }
 
 function fillDocument(doc,copy=false){
  clearLocal();loading=true;
- currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;currentStatus=copy?'draft':doc.status;
+ currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;writerSecret=copy?'':getStaffWriter(doc.id);currentStatus=copy?'draft':doc.status;
  viewOnly=!copy&&doc.status==='draft'&&doc.created_by!==userId;dirty=false;
  $('docDate').value=doc.doc_date||today();$('shift').value=doc.shift||'';$('warehouse').value=doc.warehouse||'';
  entries=(Array.isArray(doc.items)?doc.items:[]).map(item=>({...blank(),...item,key:crypto.randomUUID()}));
@@ -335,7 +388,7 @@ function restore(){
  try{raw=JSON.parse(localStorage.getItem(storeKey())||'null')}catch(_){}
  if(!raw||!raw.entries)return false;
  loading=true;
- currentId=raw.id||null;revision=raw.revision||null;currentStatus='draft';viewOnly=false;
+ currentId=raw.id||null;revision=raw.revision||null;writerSecret=currentId?getStaffWriter(currentId):'';currentStatus='draft';viewOnly=false;
  $('docDate').value=raw.date||today();$('shift').value=raw.shift||'';$('warehouse').value=raw.warehouse||'';
  let saved=[];
  if(Array.isArray(raw.entries))saved=raw.entries;
@@ -352,10 +405,12 @@ function restore(){
 async function init(){
  const login=$('loginCard');if(login)login.hidden=true;
  try{
+  const requestedStaffDoc=new URLSearchParams(location.search).get('staffdoc');
+  staffAccessKey=requestedStaffDoc?'':readStaffAccessKey();
   let session=null;
   try{const auth=await sb.auth.getSession();session=auth.data?.session||null}
   catch(error){console.warn('Сессия недоступна, доступен локальный режим',error)}
-  if(session){
+  if(session&&!staffAccessKey){
    try{
     userId=session.user.id;
     const mr=await sb.from('workspace_members').select('workspace_id').eq('user_id',userId);
@@ -375,14 +430,30 @@ async function init(){
    $('orgLabel').value='ИП Здобникова С. С.';
   }
   $('storageModeNotice').textContent=guestMode
-   ? 'Работа без входа. Черновики и журнал сохраняются только в этом браузере. На других устройствах они не появятся.'
-   : 'Действующая сессия Помогатора найдена. Документы сохраняются в общем облачном журнале.';
+   ? (staffAccessKey?'Форма для сотрудников. Черновики и отправленные списания сохраняются в общей базе и сразу доступны администратору.'
+     :'Для сохранения в общую базу откройте персональную ссылку, которую предоставил администратор.')
+   : 'Документы сохраняются в общем облачном журнале.';
   $('screen').hidden=false;
   newForm(false);
   const results=await Promise.allSettled([loadCatalog(),loadJournal()]);
   const issues=results.filter(x=>x.status==='rejected').map(x=>x.reason?.message||'Ошибка получения данных');
+  const staffDocId=new URLSearchParams(location.search).get('staffdoc');
   const requestId=new URLSearchParams(location.search).get('writeoff');
-  if(requestId){
+  if(staffDocId){
+   if(!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(staffDocId)||guestMode){
+    say('Документ сотрудников можно открыть только из авторизованного интерфейса администратора.','error');
+   }else{
+    const reply=await sb.from('kolhoz_staff_writeoffs')
+      .select('id,organization_id,workspace_id,doc_date,shift,warehouse,items,status,created_at,updated_at,submitted_at')
+      .eq('organization_id',orgId).eq('id',staffDocId).maybeSingle();
+    if(reply.error)throw reply.error;
+    if(reply.data){
+      fillDocument({...reply.data,created_by:null});
+      viewOnly=true;updateMode();
+      say('Списание сотрудника открыто в режиме просмотра. Доступны печать и Excel.','success');
+    }else say('Документ сотрудника не найден или недоступен.','error');
+   }
+  }else if(requestId){
    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)){
     say('Некорректная ссылка на списание.','error');
    }else{
@@ -397,7 +468,7 @@ async function init(){
     if(linked){fillDocument(linked);say('Документ открыт из общего журнала. Доступны печать и Excel.','success')}
     else say('Документ не найден. Возможно, он удалён или недоступен вашему аккаунту.','error');
    }
-  }else if(!restore())say(issues.length?'Форма открыта. '+issues.join('; '):'Страница готова: '+(guestMode?'вход не требуется, журнал локальный.':'подключён общий журнал.'),issues.length?'error':'success');
+  }else if(!restore())say(issues.length?'Форма открыта. '+issues.join('; '):'Страница готова: '+(guestMode?'передача в общий журнал '+(staffAccessKey?'подключена.':'ожидает ссылку сотрудника.'):'подключён общий журнал.'),issues.length?'error':'success');
  }catch(e){console.error(e);say('Не удалось открыть списания: '+(e.message||e),'error');$('stateBadge').textContent='Ошибка'}
 }
 $('addRowBtn').addEventListener('click',()=>{entries.push(blank());paintRows();persist()});
