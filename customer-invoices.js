@@ -1,5 +1,6 @@
 const INVOICE_ENDPOINT='https://rgluzdxikpagugpmusbp.supabase.co/functions/v1/stolovaya-iiko-pomogator-invoices';
 let invoiceCatalog=null;
+let invoiceCatalogLoading=false;
 const invoiceSent=new Set();
 const invoiceHash=x=>{let h=2166136261;for(const c of JSON.stringify(x)){h=Math.imul(h^c.charCodeAt(0),16777619)}return (h>>>0).toString(36)};
 async function customerInvoiceSend(btn,buyer,lines,select){
@@ -7,6 +8,7 @@ async function customerInvoiceSend(btn,buyer,lines,select){
  const pair=typeof planGuestStored==='function'?planGuestStored():null;
  const store=invoiceCatalog?.stores?.find(x=>/бухара\s*кухня/i.test(x.name));
  const date=document.getElementById('prodDocDate')?.value;
+ if(!invoiceCatalog){status.textContent='Загружаю справочники iiko. Повторите отправку после загрузки.';void customerInvoiceLoadCatalog();return;}
  const counteragent=invoiceCatalog?.counteragents?.find(x=>String(x.name||'').trim().toLocaleLowerCase('ru')==='покупатели');
  const counteragentId=counteragent?.id;
  if(!counteragentId){status.textContent='В справочнике iiko не найден контрагент «Покупатели». Обновите справочники.';return;}
@@ -21,6 +23,8 @@ async function customerInvoiceSend(btn,buyer,lines,select){
 }
 
 async function customerInvoiceLoadCatalog(){
+ if(invoiceCatalogLoading)return;
+ invoiceCatalogLoading=true;
  const status=document.getElementById('customerInvoicesStatus');
  try{
   const pair=typeof planGuestStored==='function'?planGuestStored():null;
@@ -31,6 +35,7 @@ async function customerInvoiceLoadCatalog(){
   invoiceCatalog=data;
   customerInvoicesPreview();
  }catch(e){if(status)status.textContent='Справочники iiko: '+String(e.message||e);}
+ finally{invoiceCatalogLoading=false;}
 }
 /* Customer invoices: previews and explicit per-buyer send controls. */
 function customerInvoicesPreview(){
@@ -39,6 +44,7 @@ function customerInvoicesPreview(){
  if(!status||!target)return;
  target.replaceChildren();status.textContent='';
  const load=document.createElement('button');load.type='button';load.textContent='Обновить покупателей и склады из iiko';load.onclick=customerInvoiceLoadCatalog;target.append(load);
+ if(!invoiceCatalog&&!invoiceCatalogLoading&&typeof planGuestStored==='function'&&planGuestStored()?.deviceId){void customerInvoiceLoadCatalog();}
  if(invoiceCatalog){const info=document.createElement('p');info.textContent='iiko: '+invoiceCatalog.counteragents.length+' контрагентов, '+invoiceCatalog.stores.length+' складов. Проверьте соответствия номенклатуры перед отправкой.';target.append(info);}
  const ctx=window.productionContext;
  if(!ctx||typeof productionRows==='undefined'||!productionRows.length){
@@ -114,8 +120,8 @@ function customerInvoicesPreview(){
   }
   const btn=document.createElement('button');
   btn.type='button';btn.textContent='Отправить в iiko';
-  btn.disabled=!invoiceCatalog?.stores?.some(x=>/бухара\s*кухня/i.test(x.name))||!invoiceCatalog?.counteragents?.some(x=>String(x.name||'').trim().toLocaleLowerCase('ru')==='покупатели');
-  btn.title=btn.disabled?'Загрузите склад Бухара кухня и контрагента «Покупатели» из iiko':'Создать непроведённую накладную на контрагента «Покупатели»';
+  btn.disabled=false;
+  btn.title='Создать непроведённую накладную на контрагента «Покупатели»';
   btn.style.cssText='background:#0878d9;color:white;border:0;border-radius:8px;padding:12px 16px;font-weight:600;cursor:pointer';
   btn.onclick=e=>{e.preventDefault();e.stopPropagation();customerInvoiceSend(btn,buyer,lines,details.querySelector('select'));};
   top.append(info,btn);
@@ -138,7 +144,7 @@ function customerInvoicesPreview(){
   details.append(table);
   target.append(details);
  }
- const med='Один столбец покупателя — одна накладная.';
+ const med='Каждый столбец — отдельная накладная, кроме объединённого «Гранд Капитал».';
  status.textContent='Сформировано '+cards.length+' накладных для проверки. '+med+
   (unrecognized.length?' Неопознанные заголовки: '+unrecognized.join(', ')+'.':'')+
   (invoiceCatalog?' Контрагент iiko: «Покупатели»; название из столбца — в комментарии. Проверьте сопоставление блюд.':' Сначала загрузите справочники iiko для включения кнопок.');
