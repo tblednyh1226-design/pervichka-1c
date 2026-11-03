@@ -120,7 +120,7 @@ function customerInvoicesPreview(){
   const btn=document.createElement('button');
   btn.type='button';btn.textContent='Отправить в iiko';
   btn.disabled=false;
-  btn.title='Создать непроведённую накладную на контрагента «Покупатели»';
+  btn.title='Создать непроведённую накладную без контрагента — выбрать в iiko вручную';
   btn.style.cssText='background:#0878d9;color:white;border:0;border-radius:8px;padding:12px 16px;font-weight:600;cursor:pointer';
   btn.onclick=e=>{e.preventDefault();e.stopPropagation();customerInvoiceSend(btn,buyer,lines,details.querySelector('select'));};
   top.append(info,btn);
@@ -146,5 +146,5 @@ function customerInvoicesPreview(){
  const med='Каждый столбец — отдельная накладная, кроме объединённого «Гранд Капитал».';
  status.textContent='Сформировано '+cards.length+' накладных для проверки. '+med+
   (unrecognized.length?' Неопознанные заголовки: '+unrecognized.join(', ')+'.':'')+
-  (invoiceCatalog?' Контрагент iiko: «Покупатели»; название из столбца — в комментарии. Проверьте сопоставление блюд.':' Сначала загрузите справочники iiko для включения кнопок.');
+  (invoiceCatalog?' Контрагент не заполняется; выберите «Покупатели» вручную в iiko. Название из столбца — в комментарии. Проверьте сопоставление блюд.':' Сначала загрузите справочники iiko для включения кнопок.');
 }
