@@ -47,26 +47,52 @@ document.addEventListener('DOMContentLoaded',()=>{
     document.getElementById(HOME_TABS[names[next]][0])?.focus();
   });
 });
-function show(id){document.querySelectorAll('main>section').forEach(x=>x.hidden=true);document.getElementById(id).hidden=false;scrollTo(0,0);if(id==='journal'){
- renderJournal().catch(console.error);
- let block=document.getElementById('kolhozUnifiedJournal');
- if(!block){
-  const card=document.createElement('div');card.className='card';
-  card.innerHTML='<h3>Списания «Колхоз»</h3><div id="kolhozUnifiedJournal" class="muted">Загружаю списания…</div>';
-  document.getElementById('journal').appendChild(card);
+function show(id){
+ const section=document.getElementById(id);
+ if(!section||!section.matches('main>section'))return;
+ document.querySelectorAll('main>section').forEach(x=>x.hidden=true);
+ section.hidden=false;
+ scrollTo(0,0);
+ if(id==='journal'){
+  if(location.hash!=='#journal')history.replaceState(null,'','#journal');
+  renderJournal().catch(e=>{
+   console.error('Ошибка журнала документов',e);
+   const target=document.getElementById('journalDocumentsList');
+   if(target)target.textContent='Ошибка загрузки документов: '+(e.message||e);
+  });
+  if(typeof renderKolhozJournal==='function'){
+   renderKolhozJournal().catch(e=>{
+    console.error('Ошибка журнала списаний',e);
+    const target=document.getElementById('kolhozUnifiedJournal');
+    if(target)target.textContent='Не удалось загрузить списания: '+(e.message||e);
+   });
+  }else{
+   const target=document.getElementById('kolhozUnifiedJournal');
+   if(target)target.textContent='Модуль журнала списаний не загружен. Обновите страницу.';
+  }
+ }else if(id==='home'&&location.hash==='#journal')history.replaceState(null,'',location.pathname+location.search);
+ if(id==='dirs'){
+  activeOrgId=org.value||activeOrgId;
+  if(activeOrgId)localStorage.setItem('pervichka_active_org_v2',activeOrgId);
+  dirstored.innerHTML='<p class="muted">Загружаю номенклатуру…</p>';
+  renderDirs().catch(e=>{console.error(e);dirstored.innerHTML='<p class="muted">Ошибка загрузки справочника: '+esc(e.message||e)+'</p>'});
  }
- if(typeof renderKolhozJournal==='function')renderKolhozJournal().catch(console.error);
- else {
-  const script=document.createElement('script');
-  script.src='journal-writeoffs.js?v=20261103-staff-cloud2';
-  script.onload=()=>renderKolhozJournal().catch(console.error);
-  script.onerror=()=>{document.getElementById('kolhozUnifiedJournal').textContent='Не удалось загрузить журнал списаний.'};
-  document.head.appendChild(script);
- }
-}if(id==='dirs'){activeOrgId=org.value||activeOrgId;if(activeOrgId)localStorage.setItem('pervichka_active_org_v2',activeOrgId);dirstored.innerHTML='<p class="muted">Загружаю номенклатуру…</p>';renderDirs().catch(e=>{console.error(e);dirstored.innerHTML='<p class="muted">Ошибка загрузки справочника: '+esc(e.message||e)+'</p>'})}}
+}
 document.getElementById('doc').addEventListener('change',e=>{const fs=[...e.target.files];docname.textContent=fs.length?(fs.length===1?'Выбран: '+fs[0].name:'Выбрано документов: '+fs.length+' — '+fs.map(f=>f.name).join(', ')):'Файлы ещё не выбраны'});
 async function uploadDocuments(){activeOrgId=org.value||activeOrgId;const files=[...doc.files];if(!activeOrgId){docstatus.textContent='Сначала выберите организацию.';return}if(!files.length){docstatus.textContent='Выберите фото или PDF накладной.';return}const btn=document.getElementById('docuploadbtn');btn.disabled=true;const rows=files.map(f=>({f,state:'Ожидает загрузки'}));const paint=()=>docstatus.innerHTML=rows.map(x=>'<div class="uploadrow"><b>'+esc(x.f.name)+'</b><span>'+esc(x.state)+'</span></div>').join('');paint();try{const {data:{session}}=await sb.auth.getSession();if(!session)throw new Error('Сессия истекла. Войдите снова.');for(const x of rows){x.state='Подготавливаю загрузку…';paint();const pr=await fetch(SUPABASE_URL+'/functions/v1/prepare-document-upload',{method:'POST',headers:{Authorization:'Bearer '+session.access_token,apikey:SUPABASE_KEY,'Content-Type':'application/json'},body:JSON.stringify({organization_id:activeOrgId,filename:x.f.name})});const p=await pr.json();if(!pr.ok||!p.ok)throw new Error(p.error||'Не удалось подготовить загрузку');x.state='Загружается…';paint();const up=await sb.storage.from('document-files').uploadToSignedUrl(p.path,p.token,x.f,{contentType:x.f.type||'application/octet-stream'});if(up.error)throw new Error(up.error.message);x.state='Файл загружен';paint();const ins=await sb.from('documents').insert({workspace_id:p.workspace_id,organization_id:activeOrgId,doc_type:'purchase_invoice',status:'Требует проверки',source_file_name:x.f.name,storage_path:p.path,recognition_status:'queued',diagnostic_message:'Файл сохранён. Ожидает распознавания.',created_by:session.user.id}).select('id').single();if(ins.error)throw new Error(ins.error.message);x.state='✓ Загружен · ожидает распознавания';paint()}recognition.hidden=false;rlines.innerHTML='<tr><td colspan="6" class="muted">Файлы загружены. Здесь появятся распознанные строки накладной.</td></tr>';await renderJournal()}catch(e){console.error(e);const x=rows.find(r=>!r.state.startsWith('✓'));if(x)x.state='Ошибка: '+(e.message||e);paint()}finally{btn.disabled=false}}
-async function renderJournal(){if(!activeOrgId)return;const r=await sb.from('documents').select('id,source_file_name,status,recognition_status,doc_number,doc_date,total_amount,created_at').eq('organization_id',activeOrgId).order('created_at',{ascending:false}).limit(50);const el=document.querySelector('#journal .empty');if(r.error){el.textContent='Ошибка журнала: '+r.error.message;return}el.innerHTML=r.data.length?r.data.map(d=>'<div class="orgrow"><span><b>'+esc(d.source_file_name||'Документ')+'</b><small>'+esc(d.status)+' · '+esc(d.recognition_status||'')+' · '+new Date(d.created_at).toLocaleString('ru-RU')+'</small></span></div>').join(''):'Документов пока нет.'}
+async function renderJournal(){
+ const el=document.getElementById('journalDocumentsList')||document.querySelector('#journal .empty');
+ if(!el)return;
+ const {data:{session}}=await sb.auth.getSession();
+ if(!session){el.textContent='Для просмотра документов войдите в свой аккаунт Помогатора.';return}
+ const organizationId=org?.value||activeOrgId;
+ if(!organizationId){el.textContent='Выберите организацию для просмотра её документов.';return}
+ const r=await sb.from('documents')
+  .select('id,source_file_name,status,recognition_status,doc_number,doc_date,total_amount,created_at')
+  .eq('organization_id',organizationId).order('created_at',{ascending:false}).limit(50);
+ if(r.error){el.textContent='Ошибка журнала: '+r.error.message;return}
+ el.innerHTML=r.data.length?r.data.map(d=>'<div class="orgrow"><span><b>'+esc(d.source_file_name||'Документ')+'</b><small>'+esc(d.status)+' · '+esc(d.recognition_status||'')+' · '+new Date(d.created_at).toLocaleString('ru-RU')+'</small></span></div>').join(''):'Документов пока нет.';
+}
 const dirMap={'Номенклатура':'nomenclature','Поставщики':'suppliers','Склады':'warehouses','Единицы измерения':'units','Договоры':'contracts'};
 async function renderDirs(){activeOrgId=org.value||activeOrgId;if(!activeOrgId){dirstored.innerHTML='<p class="muted">Сначала добавьте организацию.</p>';return}const [ri,rn]=await Promise.all([sb.from('directory_imports').select('*').eq('organization_id',activeOrgId).order('imported_at',{ascending:false}),sb.from('nomenclature').select('code,article,name,unit,vat_rate,group_name,is_active').eq('organization_id',activeOrgId).order('name')]);if(ri.error||rn.error){dirstored.innerHTML='<p class="muted">'+esc((ri.error||rn.error).message)+'</p>';return}const imports=ri.data||[],items=rn.data||[];let h=imports.length?'<h3>Загружено для этой организации</h3>'+imports.map(d=>'<div class="orgrow"><span><b>'+esc(d.directory_type)+'</b><small>'+esc(d.file_name)+' · '+new Date(d.imported_at).toLocaleString('ru-RU')+'</small></span></div>').join(''):'<p class="muted">Для выбранной организации справочники ещё не загружены.</p>';if(items.length){h+='<div class="preview"><h3>Номенклатура — '+items.length+' поз.</h3><div class="tablewrap"><table class="nomtable"><thead><tr><th>Код</th><th>Наименование</th><th>Артикул</th><th>Ед.</th><th>НДС</th><th>Группа</th></tr></thead><tbody>'+items.map(x=>'<tr><td>'+esc(x.code||'')+'</td><td><b>'+esc(x.name)+'</b></td><td>'+esc(x.article||'')+'</td><td>'+esc(x.unit||'')+'</td><td>'+esc(x.vat_rate==null?'':x.vat_rate+'%')+'</td><td>'+esc(x.group_name||'')+'</td></tr>').join('')+'</tbody></table></div></div>'}dirstored.innerHTML=h}
 async function demoImport(){const f=dirfile.files[0];if(!activeOrgId){importstatus.textContent='Сначала добавьте организацию.';return}if(!f){importstatus.textContent='Сначала выберите файл.';return}const ext=(f.name.split('.').pop()||'').toLowerCase();if(!['mxl','xlsx','xls','csv'].includes(ext)){importstatus.textContent='Поддерживаются MXL, XLSX, XLS и CSV.';return}const btn=document.querySelector('#dirs .primary');btn.disabled=true;btn.textContent='Загружаю…';importstatus.textContent='Передаю файл на сервер…';try{const fd=new FormData();fd.append('file',f);fd.append('organization_id',activeOrgId);fd.append('directory_type',dirMap[dirtype.value]);const {data:{session}}=await sb.auth.getSession();if(!session)throw new Error('Сессия истекла. Войдите снова.');const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),30000);let res;try{res=await fetch(SUPABASE_URL+'/functions/v1/upload-directory',{method:'POST',headers:{Authorization:'Bearer '+session.access_token,apikey:SUPABASE_KEY},body:fd,signal:ctl.signal})}finally{clearTimeout(timer)}let data;try{data=await res.json()}catch(_){throw new Error('Сервер вернул ответ '+res.status)}if(!res.ok||!data?.ok)throw new Error(data?.error||('Ошибка сервера '+res.status));importstatus.textContent=data.saved>0?'Готово: из MXL распознано и сохранено позиций: '+data.saved+'.':'Файл загружен, но номенклатура автоматически не определена. Строк в MXL: '+(data.row_count||0)+'.';dirfile.value='';await renderDirs();if(data.preview?.length){const rows=data.preview.map(r=>'<tr>'+r.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('');dirstored.insertAdjacentHTML('afterbegin','<div class="preview"><h3>Предпросмотр MXL</h3><div class="tablewrap"><table>'+rows+'</table></div></div>')}}catch(e){console.error(e);importstatus.textContent='Ошибка загрузки: '+(e.message||e)}finally{btn.disabled=false;btn.textContent='Сохранить справочник'}}
