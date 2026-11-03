@@ -219,14 +219,11 @@ function morningFindSections(rows,header){
   return {pastryStart,compoteLast,extrasStart,nextAfterPastry};
 }
 function morningLargePieInPieces(name,weight){
-  // A full pie is always eight saleable slices, regardless of the weight
-  // recorded in Excel (which may describe a slice rather than the whole pie).
-  const dish=morningNorm(name),unit=morningNorm(weight);
+  // Plan quantities for large pies are whole pies, even when the
+  // source unit is labelled "кус.". Convert raw quantities to 8 slices.
+  const dish=morningNorm(name);
   if(!/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/u.test(dish))return false;
-  if(/пирож|мини[\\s-]*пирог|маленьк/u.test(dish))return false;
-  // Explicitly piece-based rows must never be multiplied again.
-  if(/(?:кус(?:ок|очек|ка|ков|ки)?|порц(?:ия|ии|ий)?)/u.test(unit))return false;
-  if(/(?:за\\s*кус(?:ок)?|порционн|кусочк)/u.test(dish))return false;
+  if(/пирож|мини[\s-]*пирог|маленьк/u.test(dish))return false;
   return true;
 }
 function morningExtract(rows,header,col,from,to,warnings,convertLargePies=false){
