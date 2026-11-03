@@ -9,6 +9,7 @@ function transferPrintForms(){
  productionDocuments.forEach((doc,index)=>{
   const wrap=document.createElement('div');wrap.className='card';
   const heading=document.createElement('h4');heading.textContent='№ '+(index+1)+' · '+doc.source+' → '+doc.target;wrap.append(heading);
+  if(index===0){const version=document.createElement('p');version.className='muted';version.textContent='Версия расчёта пирогов: 03.11.2026 / проверка ×8 №4';wrap.append(version);}
   const lines=doc.items.map(item=>{
    const row=productionRows[item.sourceRow-1]||[];
    const raw=row[3],clean=String(raw??'').replace(/\s/g,'').replace(',','.');
@@ -17,7 +18,11 @@ function transferPrintForms(){
    // Already converted rows carry conversionFactor=8 and must not be doubled.
    const isLargePie=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(item.name)&&
      !/пирож|мини[\\s-]*пирог|маленьк/iu.test(item.name);
-   const quantity=isLargePie&&item.conversionFactor!==8?item.quantity*8:item.quantity;
+   const quantity=isLargePie
+     ? (Number.isFinite(Number(item.sourceQuantity))
+         ? Number(item.sourceQuantity)*8
+         : item.conversionFactor===8 ? Number(item.quantity) : Number(item.quantity)*8)
+     : Number(item.quantity);
    return {name:item.name,quantity,price,amount:price*quantity};
   });
   const missing=lines.filter(x=>!Number.isFinite(x.price)||x.price<0);
