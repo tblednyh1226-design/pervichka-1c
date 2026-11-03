@@ -42,6 +42,19 @@ function customerInvoicesPreview(){
  const target=document.getElementById('customerInvoicesResult');
  if(!status||!target)return;
  target.replaceChildren();status.textContent='';
+ const reset=document.createElement('button');reset.type='button';reset.textContent='Разблокировать прошлые ошибочные отправки';
+ reset.onclick=()=>{
+  const pair=typeof planGuestStored==='function'?planGuestStored():null;
+  if(!pair?.deviceId){status.textContent='Сначала подключите MAIN';return;}
+  const prefix='pomogator-invoice-once:v1:'+pair.deviceId+':';
+  const keys=Object.keys(localStorage).filter(k=>k.startsWith(prefix)&&localStorage.getItem(k)==='pending');
+  if(!keys.length){status.textContent='Нет заблокированных неподтверждённых отправок';return;}
+  if(!confirm('Разблокировать '+keys.length+' неподтверждённых отправок? Делайте это только для накладных, которых нет в iiko. Подтверждённые отправки останутся заблокированными.'))return;
+  keys.forEach(k=>{localStorage.removeItem(k);invoiceSent.delete(k);});
+  status.textContent='Разблокировано: '+keys.length+'. Сформируйте накладные заново и отправляйте по одной.';
+  customerInvoicesPreview();
+ };
+ target.append(reset);
  const load=document.createElement('button');load.type='button';load.textContent='Обновить покупателей и склады из iiko';load.onclick=customerInvoiceLoadCatalog;target.append(load);
  if(!invoiceCatalog&&!invoiceCatalogLoading&&typeof planGuestStored==='function'&&planGuestStored()?.deviceId){void customerInvoiceLoadCatalog();}
  if(invoiceCatalog){const info=document.createElement('p');info.textContent='iiko: '+invoiceCatalog.counteragents.length+' контрагентов, '+invoiceCatalog.stores.length+' складов. Проверьте соответствия номенклатуры перед отправкой.';target.append(info);}
