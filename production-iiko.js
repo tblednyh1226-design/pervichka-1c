@@ -507,8 +507,9 @@ function productionBuild(){
    // A full-size pie (normally 1000 g) is transferred in the same pieces
    // as the cooking act: one pie = eight portions. Convert exactly once
    // while building EACH route, before totals, preview and iiko upload.
-   const conversionFactor=typeof morningLargePieInPieces==='function'&&
-     morningLargePieInPieces(entry.name,entry.weight)?8:1;
+   const isLargePie=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(entry.name)&&
+     !/пирож|мини[\\s-]*пирог|маленьк/iu.test(entry.name);
+   const conversionFactor=isLargePie?8:1;
    const finalAmount=amount*conversionFactor;
    const prior=items.get(key);
    if(prior){
@@ -629,6 +630,20 @@ function productionBuild(){
   });
   if(!productionDocuments.length)
     throw Error('Нет положительных количеств для выбранных точек');
+  // Validate all transfer drafts before preview, print, Excel or iiko send.
+  // Source plan values are whole large pies even when labelled "кус.".
+  for(const doc of productionDocuments){
+    for(const item of doc.items){
+      const large=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(item.name)&&
+        !/пирож|мини[\\s-]*пирог|маленьк/iu.test(item.name);
+      if(large&&item.conversionFactor!==8){
+        item.sourceQuantity=item.quantity;
+        item.quantity*=8;
+        item.conversionFactor=8;
+        item.quantityUnit='кус.';
+      }
+    }
+  }
   const warningsAll=[...warnings,...missingCodes];
   result.hidden=false;
   if(typeof transferRender==='function')transferRender();
