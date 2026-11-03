@@ -45,17 +45,21 @@ function customerInvoicesPreview(){
  const norm=v=>String(v??'').toLocaleLowerCase('ru').replace(/ё/g,'е').replace(/[^a-zа-я0-9+]+/gi,' ').trim();
  const aliases=new Map([
   ['янино','Янино'],['навык+','Навык+'],['навык','Навык+'],
-  ['эйджи','Эйджи'],['ейджи','Эйджи'],['обухово','Обухово'],
-  ['ревада','Ревада'],['крокид','Крокид'],['нпп','НПП'],
-  ['сервис ман','Сервис Ман'],['сервисман','Сервис Ман'],
-  ['гранд капитал','Гранд Капитал'],['гранд капитал ночь','Гранд Капитал'],
-  ['мед экспресс','Мед экспресс'],['медэкспресс','Мед экспресс']
+  ['зидки','ЗИДКИ'],['зидки эй джи','ЗИДКИ'],
+  ['эй джи','ЗИДКИ'],['эй джи g','ЗИДКИ'],
+  ['эйджи','ЗИДКИ'],['ейджи','ЗИДКИ'],
+  ['обухово','Обухово'],['ревада','Ревада'],['крокид','Крокид'],
+  ['нпп','НПП'],['сервис ман','Сервис Ман'],['сервисман','Сервис Ман'],
+  ['гранд капитал','Гранд Капитал'],['гранд капитал ночь','Гранд Капитал']
  ]);
+ const excludedHeadings=new Set(['мед экспресс','медэкспресс','мега']);
+
  const buyers=new Map(),unrecognized=[];
  (ctx.heads||[]).forEach((raw,col)=>{
   if(col<4)return;
   const heading=String(raw??'').trim(),key=norm(heading);
   if(!heading)return;
+  if(excludedHeadings.has(key))return;
   const buyer=aliases.get(key);
   if(buyer){if(!buyers.has(buyer))buyers.set(buyer,[]);buyers.get(buyer).push(col);}
   else if(!/^(всего|итого|раздача|правда|бухара|этм|редмонд|рэдмонд|бестужевская|модуль|мега|цена|кол во|количество|выпечка)/.test(key))
@@ -123,7 +127,7 @@ function customerInvoicesPreview(){
   const btn=document.createElement('button');btn.type='button';btn.textContent='Выгрузить в iiko';btn.disabled=!invoiceCatalog;btn.title=invoiceCatalog?'Отправить новую накладную NEW в iiko':'Сначала загрузите справочники iiko';btn.onclick=()=>customerInvoiceSend(btn,buyer,lines,select);details.append(btn);
   target.append(details);
  }
- const med=buyers.has('Мед экспресс')?'«Мед экспресс» найден.':'«Мед экспресс» не найден в заголовках этого листа.';
+ const med='«Мед экспресс» исключён из накладных.';
  status.textContent='Сформировано '+cards.length+' накладных для проверки. '+med+
   (unrecognized.length?' Неопознанные заголовки: '+unrecognized.join(', ')+'.':'')+
   (invoiceCatalog?' Кнопки выгрузки доступны после выбора контрагента и сопоставления блюд.':' Сначала загрузите справочники iiko для включения кнопок.');
