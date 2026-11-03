@@ -405,12 +405,15 @@ function productionSelectSheet(){
    row.slice(4).some(x=>productionPoint(x)));
  if(header<0)throw Error('Не найдена основная строка с заголовками точек');
  const heads=productionRows[header];
+ // Optional classification row immediately above the named columns: outlet names for transfers, blanks for external buyers.
+ const classification=header>0?productionRows[header-1]||[]:[];
+ const hasClassification=heads.some((v,col)=>col>=4&&productionPoint(v)&&productionPoint(classification[col]));
  let pastry;
  try{pastry=productionFindPastry(productionRows,header+1)}
  catch(e){productionError(e);throw e}
  const pastryColumns=productionPastryColumns(productionRows,pastry.start,header,pastry.end);
  const allReceivers=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
-   .filter(x=>x.name&&x.col>=4&&x.point&&
+   .filter(x=>x.name&&x.col>=4&&x.point&&(!hasClassification||Boolean(productionPoint(classification[x.col])))&&
       x.point!=='Бухара раздача'&&x.point!=='Мед экспресс'&&x.point!=='МЕГА');
  const etmSources=allReceivers.filter(x=>x.point==='ЭТМ');
  const options=allReceivers.filter(x=>x.point!=='ЭТМ');
@@ -425,7 +428,7 @@ function productionSelectSheet(){
  const unknown=heads.map((v,col)=>({name:String(v??'').trim(),col}))
    .filter(x=>x.name&&x.col>=4&&!productionSkip.test(x.name)&&
       !productionPoint(x.name));
- window.productionContext={header,heads,options,pastry,pastryColumns,unknown};
+ window.productionContext={header,heads,classification,hasClassification,options,pastry,pastryColumns,unknown};
  productionDocuments=[];
  const result=document.getElementById('prodresult');
  if(result){result.innerHTML='';result.hidden=true}
