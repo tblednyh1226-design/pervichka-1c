@@ -195,6 +195,8 @@ async function productionMainLoadLatest(){
 }
 function productionPoint(name){
  const n=productionNorm(name).replace(/\s+/g,' ');
+ // «Редм фас» is an external customer invoice column, not the Рэдмонд outlet.
+ if(/^р[еэ]дм\s*фас(?:\s|$)/u.test(n))return null;
  if(/^(раздача правды|правда раздача|пр)$/.test(n))return 'Правда раздача';
  if(/^(раздача бухара|бухара раздача|бр)$/.test(n))return 'Бухара раздача';
  if(/^этм(?: день| ночь)?$/.test(n))return 'ЭТМ';
