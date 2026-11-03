@@ -26,9 +26,14 @@ async function renderKolhozJournal(){
     .eq('organization_id',GENERAL_KOLHOZ_ORG_ID).order('created_at',{ascending:false}).limit(100);
    if(r.error)throw r.error;
    cloud=(r.data||[]).map(d=>({...d,_storage:'cloud'}));
+   const staff=await sb.from('kolhoz_staff_writeoffs')
+    .select('id,doc_date,shift,warehouse,status,items,created_at,updated_at')
+    .eq('organization_id',GENERAL_KOLHOZ_ORG_ID).order('created_at',{ascending:false}).limit(100);
+   if(staff.error)throw staff.error;
+   cloud.push(...(staff.data||[]).map(d=>({...d,_storage:'staff'})));
   }
  }catch(e){warning='Не удалось получить облачные списания: '+(e.message||e)}
- const rows=[...cloud,...generalJournalLocalWriteoffs()];
+ const rows=[...generalJournalLocalWriteoffs(),...cloud];
  const unique=[...new Map(rows.map(x=>[x.id,x])).values()];
  unique.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
  if(!unique.length){
@@ -38,8 +43,8 @@ async function renderKolhozJournal(){
  dest.innerHTML=unique.map(d=>{
   const count=Array.isArray(d.items)?d.items.filter(x=>String(x.name||'').trim()).length:0;
   const title='Списание · '+generalJournalDate(d.doc_date)+' · '+esc(d.warehouse||'Склад не указан');
-  const label=d._storage==='local'?'Этот браузер':'Общий журнал';
-  const link='./writeoffs.html?writeoff='+encodeURIComponent(d.id);
+  const label=d._storage==='staff'?'Сотрудники Колхоза':d._storage==='local'?'Этот браузер':'Общий журнал';
+  const link='./writeoffs.html?'+(d._storage==='staff'?'staffdoc=':'writeoff=')+encodeURIComponent(d.id);
   const status=d.status==='submitted'?'Отправлено':'Черновик';
   return '<div class="orgrow">'
    +'<span><b>'+title+'</b>'
