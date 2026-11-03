@@ -8,14 +8,14 @@ async function customerInvoiceSend(btn,buyer,lines,select){
  const store=invoiceCatalog?.stores?.find(x=>/бухара\s*кухня/i.test(x.name));
  const date=document.getElementById('prodDocDate')?.value;
  const counteragentId=select?.value;
- if(!pair?.deviceId||!pair?.token||!store||!counteragentId||!/^\d{4}-\d{2}-\d{2}$/.test(date||'')){status.textContent='Подключите MAIN, выберите контрагента, проверьте склад Бухара кухня и дату.';return;}
+ if(!pair?.deviceId||!pair?.token||!store||!/^\d{4}-\d{2}-\d{2}$/.test(date||'')){status.textContent='Подключите MAIN, проверьте склад Бухара кухня и дату.';return;}
  const items=lines.map(x=>{const resolved=typeof iikoDraftResolveProduct==='function'?iikoDraftResolveProduct({name:x.name}):null;return {name:x.name,productId:resolved?.product?.id,amount:x.qty,price:x.price};});
  if(items.some(x=>!x.productId)){status.textContent='Сначала сопоставьте номенклатуру iiko: '+items.filter(x=>!x.productId).map(x=>x.name).slice(0,8).join(', ');return;}
- const key='pomogator-invoice-once:v1:'+pair.deviceId+':'+invoiceHash({buyer,date,store:store.id,counteragentId,items});
+ const key='pomogator-invoice-once:v1:'+pair.deviceId+':'+invoiceHash({buyer,date,store:store.id,counteragentId:counteragentId||'',items});
  if(invoiceSent.has(key)||localStorage.getItem(key)){status.textContent='Отправка этой накладной уже запускалась';return;}
- if(!confirm('Отправить расходную накладную '+buyer+' в iiko без проведения?\nДата: '+date+'\nПозиций: '+items.length+'\nПовторная отправка будет заблокирована.'))return;
+ if(!confirm('Отправить расходную накладную '+buyer+' в iiko без проведения?\nКонтрагент: '+(counteragentId?'выбран':'не указан, покупатель в комментарии')+'\nДата: '+date+'\nПозиций: '+items.length+'\nПовторная отправка будет заблокирована.'))return;
  invoiceSent.add(key);localStorage.setItem(key,'pending');btn.disabled=true;btn.textContent='Отправляется…';
- try{const res=await fetch(INVOICE_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},body:JSON.stringify({action:'upload',document:{type:'outgoingInvoice',status:'NEW',dateIncoming:date+'T16:00:00',storeId:store.id,counteragentId,items:items.map(({productId,amount,price})=>({productId,amount,price}))}})});const data=await res.json();if(!res.ok||!data.ok||!data.accepted)throw Error(data.error||'Нет подтверждения iiko');localStorage.setItem(key,'confirmed:'+data.id);btn.textContent='Отправлено';status.textContent='iiko подтвердила накладную '+buyer+', ID '+data.id;}catch(e){btn.textContent='Отправка проверяется';status.textContent='Ошибка: '+String(e.message||e)+'. Повтор заблокирован — проверьте документы в iiko.';}
+ try{const res=await fetch(INVOICE_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},body:JSON.stringify({action:'upload',document:{type:'outgoingInvoice',status:'NEW',dateIncoming:date+'T16:00:00',storeId:store.id,...(counteragentId?{counteragentId}:{}),comment:'Покупатель по плану: '+buyer+'. Контрагент выбирается вручную в iiko.',items:items.map(({productId,amount,price})=>({productId,amount,price}))}})});const data=await res.json();if(!res.ok||!data.ok||!data.accepted)throw Error(data.error||'Нет подтверждения iiko');localStorage.setItem(key,'confirmed:'+data.id);btn.textContent='Отправлено';status.textContent='iiko подтвердила накладную '+buyer+', ID '+data.id;}catch(e){btn.textContent='Отправка проверяется';status.textContent='Ошибка: '+String(e.message||e)+'. Повтор заблокирован — проверьте документы в iiko.';}
 }
 
 async function customerInvoiceLoadCatalog(){
@@ -124,11 +124,11 @@ function customerInvoicesPreview(){
   let select=null;
   if(invoiceCatalog){const candidates=invoiceCatalog.counteragents.filter(x=>norm(x.name)===norm(buyer));select=document.createElement('select');select.setAttribute('aria-label','Контрагент iiko для '+buyer);const empty=document.createElement('option');empty.value='';empty.textContent='Выберите контрагента iiko';select.append(empty);for(const x of invoiceCatalog.counteragents){const option=document.createElement('option');option.value=x.id;option.textContent=x.name;select.append(option)}select.value=candidates.length===1?candidates[0].id:'';details.append(select);}
 
-  const btn=document.createElement('button');btn.type='button';btn.textContent='Выгрузить в iiko';btn.disabled=!invoiceCatalog;btn.title=invoiceCatalog?'Отправить новую накладную NEW в iiko':'Сначала загрузите справочники iiko';btn.onclick=()=>customerInvoiceSend(btn,buyer,lines,select);details.append(btn);
+  const btn=document.createElement('button');btn.type='button';btn.textContent='Выгрузить в iiko';btn.disabled=!invoiceCatalog?.stores?.some(x=>/бухара\s*кухня/i.test(x.name));btn.title=btn.disabled?'Сначала загрузите склад Бухара кухня из iiko':'Создать непроведённую накладную, контрагент необязателен';btn.onclick=()=>customerInvoiceSend(btn,buyer,lines,select);details.append(btn);
   target.append(details);
  }
  const med='«Мед экспресс» исключён из накладных.';
  status.textContent='Сформировано '+cards.length+' накладных для проверки. '+med+
   (unrecognized.length?' Неопознанные заголовки: '+unrecognized.join(', ')+'.':'')+
-  (invoiceCatalog?' Кнопки выгрузки доступны после выбора контрагента и сопоставления блюд.':' Сначала загрузите справочники iiko для включения кнопок.');
+  (invoiceCatalog?' Контрагент необязателен: покупатель будет указан в комментарии. Проверьте сопоставление блюд.':' Сначала загрузите справочники iiko для включения кнопок.');
 }
