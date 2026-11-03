@@ -51,8 +51,12 @@ function customerInvoicesPreview(){
   if(col<4)return;
   const heading=String(raw??'').trim(),key=norm(heading);
   if(!heading||excludedHeadings.test(key))return;
-  // Each customer column is a separate invoice, including day/night columns.
-  buyers.set(heading+' ['+col+']',{buyer:heading,columns:[col]});
+  // Grand Capital day and night are summed into one invoice.
+  const grandCapital=/^гранд капитал(?: ночь)?$/.test(key);
+  const buyer=grandCapital?'Гранд Капитал':heading;
+  const id=grandCapital?'grand-capital':heading+' ['+col+']';
+  if(!buyers.has(id))buyers.set(id,{buyer,columns:[]});
+  buyers.get(id).columns.push(col);
  });
  if(!buyers.size){status.textContent='Не найдены заголовки покупателей в выбранном листе. Накладные не сформированы.';return;}
  const number=v=>{
