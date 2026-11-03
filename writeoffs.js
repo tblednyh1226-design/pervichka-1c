@@ -3,10 +3,14 @@ const $ = (id) => document.getElementById(id);
 const SUPABASE_URL = 'https://dwdunpyzcfdwokoczenl.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_6sFPuw3W1Zfqv9viN41TcQ_xeRhOEzw';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const GUEST_ORG_ID='3d89b13c-28e9-4cb8-a439-407c6ecaac22';
+const GUEST_JOURNAL_KEY='kolhoz_writeoffs_local_journal_v1';
+const GUEST_CATALOG_URL=SUPABASE_URL+'/functions/v1/kolhoz-writeoffs-catalog';
+const REASONS=['Порча','Бракераж','Брак','Служебное питание','Возврат от покупателя','Прочее','Срок годности'];
 let userId = '', workspaceId = '', orgId = '';
 let catalog = [], catalogByName = new Map(), currentId = null, revision = null, currentStatus = 'draft';
 let entries = [], journalData = [];
-let dirty = false, busy = false, loading = true, viewOnly = false;
+let dirty = false, busy = false, loading = true, viewOnly = false, guestMode = false;
 
 const blank = () => ({key: crypto.randomUUID(), nomenclature_id:null, code:'', name:'', qty:'', unit:'', reason:''});
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -27,7 +31,7 @@ function updateMode(){
  $('saveBtn').disabled=sent||busy;
  $('submitBtn').disabled=sent||busy;
  $('submitBtn').textContent=sent?'Уже отправлено':'Отправить в журнал';
- $('stateBadge').textContent=viewOnly?'Черновик · просмотр':(currentStatus==='submitted'?'Отправлено':(currentId?'Черновик в журнале':'Новый черновик'));
+ $('stateBadge').textContent=(guestMode?'Локально · ':'')+(viewOnly?'Черновик · просмотр':(currentStatus==='submitted'?'Отправлено':(currentId?'Черновик в журнале':'Новый черновик')));
  $('catalogStatus').textContent=catalog.length?'Справочник: '+catalog.length+' позиций':'Справочник пока пуст';
  repaintCounts();
 }
@@ -70,12 +74,15 @@ function paintRows(){
   tr.innerHTML='<td><input class="item-name" data-field="name" list="catalog" placeholder="Начните вводить название" autocomplete="off"></td>'
    +'<td><input class="item-qty" data-field="qty" type="text" inputmode="decimal" placeholder="0,000"></td>'
    +'<td><input class="item-unit" data-field="unit" placeholder="Ед."></td>'
-   +'<td><input class="item-reason" data-field="reason" list="reasons" placeholder="Выберите или введите"></td>'
+   +'<td><select class="item-reason" data-field="reason"><option value="">Выберите причину</option>'+REASONS.map(r=>'<option value="'+esc(r)+'">'+esc(r)+'</option>').join('')+'</select></td>'
    +'<td><button type="button" class="remove" title="Удалить строку" aria-label="Удалить строку">✕</button></td>';
   for(const field of ['name','qty','unit','reason']){
    const input=tr.querySelector('[data-field="'+field+'"]');
+   if(field==='reason'&&line.reason&&!REASONS.includes(line.reason)){
+     const oldOption=document.createElement('option');oldOption.value=line.reason;oldOption.textContent=line.reason+' (ранее сохранено)';input.appendChild(oldOption);
+   }
    input.value=line[field]??'';
-   input.addEventListener('input',()=>{
+   input.addEventListener(field==='reason'?'change':'input',()=>{
     line[field]=input.value;
     if(field==='name')applyCatalogMatch(line,tr);
     if(field==='unit'){
@@ -251,6 +258,12 @@ async function onJournalClick(e){
 async function loadCatalog(){
  catalog=[];let from=0;
  while(from<15000){
+  if(guestMode){
+   const response=await fetch(GUEST_CATALOG_URL,{method:'GET',headers:{Accept:'application/json'}});
+   const data=await response.json();
+   if(!response.ok||!data.ok)throw new Error(data.error||'Не удалось загрузить справочник');
+   catalog.push(...data.rows);break;
+  }
   const r=await sb.from('kolhoz_writeoff_nomenclature').select('id,source_row,name,unit').eq('organization_id',orgId).order('source_row').range(from,from+999);
   if(r.error)throw r.error;
   catalog.push(...(r.data||[]));
