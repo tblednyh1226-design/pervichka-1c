@@ -13,7 +13,12 @@ function transferPrintForms(){
    const row=productionRows[item.sourceRow-1]||[];
    const raw=row[3],clean=String(raw??'').replace(/\s/g,'').replace(',','.');
    const price=clean!==''?Number(clean):NaN;
-   return {name:item.name,quantity:item.quantity,price,amount:price*item.quantity};
+   // Last-line safeguard: never print an unconverted whole large pie.
+   // Already converted rows carry conversionFactor=8 and must not be doubled.
+   const isLargePie=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(item.name)&&
+     !/пирож|мини[\\s-]*пирог|маленьк/iu.test(item.name);
+   const quantity=isLargePie&&item.conversionFactor!==8?item.quantity*8:item.quantity;
+   return {name:item.name,quantity,price,amount:price*quantity};
   });
   const missing=lines.filter(x=>!Number.isFinite(x.price)||x.price<0);
   if(missing.length){const p=document.createElement('p');p.className='muted';p.textContent='Нет корректной цены: '+missing.map(x=>x.name).join(', ');wrap.append(p);}
