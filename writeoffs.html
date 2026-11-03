@@ -27,9 +27,9 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 <header><div><b>Помогатор · Списания Колхоз</b><small>Учёт списаний и общий журнал</small></div><a href="./index.html">← В Помогатор</a></header>
 <main>
  <div class="top"><div><h1>Списание номенклатуры</h1><p class="muted">Накапливайте позиции в черновике и отправляйте готовое списание в общий журнал. Отправка в 1С не выполняется.</p></div><span id="stateBadge" class="status">Подключение…</span></div>
- <p id="notice" class="notice" role="status">Проверяю вход и справочник организации…</p>
- <section id="loginCard" class="card" hidden><h2>Войти в Помогатор</h2><p class="muted">Для сохранения документов в общем журнале используется учётная запись Помогатора.</p><form id="loginForm"><div class="formgrid"><label>Электронная почта<input id="loginEmail" type="email" autocomplete="username" required></label><label>Пароль<input id="loginPassword" type="password" autocomplete="current-password" required></label><label style="justify-content:end"><span>&nbsp;</span><button type="submit" class="primary" id="loginButton">Войти</button></label></div></form><p id="loginError" class="muted" role="status"></p></section>
+ <p id="notice" class="notice" role="status">Открываю страницу и загружаю справочник номенклатуры…</p>
  <div id="screen" hidden>
+  <p id="storageModeNotice" class="notice">Уточняю режим сохранения документов…</p>
   <section class="card"><div class="sectiontitle"><h2>Документ</h2><button type="button" id="newBtn">+ Новое списание</button></div>
    <fieldset id="editorFields">
    <div class="formgrid">
@@ -47,7 +47,7 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
    </section>
   </fieldset>
   <datalist id="catalog"></datalist><datalist id="reasons"><option value="Порча"></option><option value="Брак"></option><option value="Просрочка"></option><option value="Недостача"></option><option value="Технологические потери"></option><option value="Питание персонала"></option><option value="Прочее"></option></datalist>
-  <section class="card"><div class="toolbar"><button type="button" id="saveBtn">Сохранить черновик</button><button type="button" id="submitBtn" class="primary">Отправить в журнал</button><button type="button" id="excelBtn">Скачать Excel</button><span id="catalogStatus" class="muted"></span></div><p class="muted">Черновики видны в общем журнале и доступны для продолжения. Отправленные списания не редактируются; для исправлений создайте копию.</p></section>
+  <section class="card"><div class="toolbar"><button type="button" id="saveBtn">Сохранить черновик</button><button type="button" id="submitBtn" class="primary">Отправить в журнал</button><button type="button" id="excelBtn">Скачать Excel</button><span id="catalogStatus" class="muted"></span></div><p class="muted">Выберите причину в каждой строке. Без входа журнал сохраняется в этом браузере; при уже действующей сессии Помогатора — в общем облачном журнале. Отправленные списания не редактируются.</p></section>
   <section class="card"><div class="sectiontitle"><h2>Журнал списаний</h2><button id="reloadBtn" type="button">Обновить</button></div>
    <div class="formgrid"><label>Статус<select id="statusFilter"><option value="">Все</option><option value="draft">Черновики</option><option value="submitted">Отправленные</option></select></label><label>Дата с<input id="dateFrom" type="date"></label><label>Дата по<input id="dateTo" type="date"></label></div>
    <div id="journal" class="empty">Загружаю журнал…</div><p id="journalCount" class="muted"></p>
@@ -56,5 +56,5 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-<script src="writeoffs.js?v=20261103-flat10-1"></script>
+<script src="writeoffs.js?v=20261103-guest-reasons-1"></script>
 </body></html>
