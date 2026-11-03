@@ -86,3 +86,18 @@ body.guest-mode .context,body.guest-mode .headright{display:none!important}
  .home-tabs .home-tab{padding:12px 5px;font-size:14px;overflow-wrap:anywhere}
  .home-panel h2{font-size:20px}
 }
+
+/* Always-visible shortcut to the administrator's combined journal. */
+header .journal-shortcut{margin-left:auto;margin-right:14px;background:#155eef;color:#fff;border:1px solid #155eef;border-radius:10px;padding:11px 15px;font-size:14px;font-weight:700;white-space:nowrap;cursor:pointer}
+header .journal-shortcut:hover{background:#004ee1}
+header .journal-shortcut:focus-visible{outline:3px solid #a4bdff;outline-offset:2px}
+#journal>.card{margin-top:18px}
+#journal>.card h3{margin:0 0 13px}
+#journal .card .empty{margin-top:0}
+#kolhozUnifiedJournal{margin-top:12px}
+#kolhozUnifiedJournal .orgrow{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:12px 0;border-top:1px solid #e5e7eb}
+#kolhozUnifiedJournal .orgrow span{min-width:0;overflow-wrap:anywhere}
+#kolhozUnifiedJournal .orgrow small{display:block;color:#667085;margin-top:5px}
+#kolhozUnifiedJournal .journal-link{white-space:nowrap;color:#155eef}
+#refreshKolhozJournal{padding:8px 12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;cursor:pointer}
+@media(max-width:650px){header .journal-shortcut{font-size:12px;padding:9px 10px;margin-right:6px;white-space:normal;text-align:center}#kolhozUnifiedJournal .orgrow{flex-direction:column;align-items:stretch}}
