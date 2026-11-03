@@ -381,7 +381,23 @@ async function init(){
   newForm(false);
   const results=await Promise.allSettled([loadCatalog(),loadJournal()]);
   const issues=results.filter(x=>x.status==='rejected').map(x=>x.reason?.message||'Ошибка получения данных');
-  if(!restore())say(issues.length?'Форма открыта. '+issues.join('; '):'Страница готова: '+(guestMode?'вход не требуется, журнал локальный.':'подключён общий журнал.'),issues.length?'error':'success');
+  const requestId=new URLSearchParams(location.search).get('writeoff');
+  if(requestId){
+   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)){
+    say('Некорректная ссылка на списание.','error');
+   }else{
+    let linked=journalData.find(x=>x.id===requestId);
+    if(!linked&&guestMode)linked=readLocalJournal().find(x=>x.id===requestId);
+    if(!linked&&!guestMode){
+     const reply=await sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,items,status,created_by,created_at,updated_at,submitted_at')
+      .eq('organization_id',orgId).eq('id',requestId).maybeSingle();
+     if(reply.error)throw reply.error;
+     linked=reply.data;
+    }
+    if(linked){fillDocument(linked);say('Документ открыт из общего журнала. Доступны печать и Excel.','success')}
+    else say('Документ не найден. Возможно, он удалён или недоступен вашему аккаунту.','error');
+   }
+  }else if(!restore())say(issues.length?'Форма открыта. '+issues.join('; '):'Страница готова: '+(guestMode?'вход не требуется, журнал локальный.':'подключён общий журнал.'),issues.length?'error':'success');
  }catch(e){console.error(e);say('Не удалось открыть списания: '+(e.message||e),'error');$('stateBadge').textContent='Ошибка'}
 }
 $('addRowBtn').addEventListener('click',()=>{entries.push(blank());paintRows();persist()});
