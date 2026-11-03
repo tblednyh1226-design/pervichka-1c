@@ -9,17 +9,16 @@ async function customerInvoiceSend(btn,buyer,lines,select){
  const store=invoiceCatalog?.stores?.find(x=>/бухара\s*кухня/i.test(x.name));
  const date=document.getElementById('prodDocDate')?.value;
  if(!invoiceCatalog){status.textContent='Загружаю справочники iiko. Повторите отправку после загрузки.';void customerInvoiceLoadCatalog();return;}
- const counteragent=invoiceCatalog?.counteragents?.find(x=>String(x.name||'').trim().toLocaleLowerCase('ru')==='покупатели');
- const counteragentId=counteragent?.id;
- if(!counteragentId){status.textContent='В справочнике iiko не найден контрагент «Покупатели». Обновите справочники.';return;}
+ // Leave counteragent empty; user selects «Покупатели» manually in iiko.
+ const counteragentId=null;
  if(!pair?.deviceId||!pair?.token||!store||!/^\d{4}-\d{2}-\d{2}$/.test(date||'')){status.textContent='Подключите MAIN, проверьте склад Бухара кухня и дату.';return;}
  const items=lines.map(x=>{const resolved=typeof iikoDraftResolveProduct==='function'?iikoDraftResolveProduct({name:x.name}):null;return {name:x.name,productId:resolved?.product?.id,amount:x.qty,price:x.price};});
  if(items.some(x=>!x.productId)){status.textContent='Сначала сопоставьте номенклатуру iiko: '+items.filter(x=>!x.productId).map(x=>x.name).slice(0,8).join(', ');return;}
  const key='pomogator-invoice-once:v1:'+pair.deviceId+':'+invoiceHash({buyer,date,store:store.id,counteragentId:counteragentId||'',items});
  if(invoiceSent.has(key)||localStorage.getItem(key)){status.textContent='Отправка этой накладной уже запускалась';return;}
- if(!confirm('Отправить расходную накладную '+buyer+' в iiko без проведения?\nКонтрагент: Покупатели\nДата: '+date+'\nПозиций: '+items.length+'\nПовторная отправка будет заблокирована.'))return;
+ if(!confirm('Отправить расходную накладную '+buyer+' в iiko без проведения?\nКонтрагент: не указан (выбрать вручную в iiko)\nДата: '+date+'\nПозиций: '+items.length+'\nПовторная отправка будет заблокирована.'))return;
  invoiceSent.add(key);localStorage.setItem(key,'pending');btn.disabled=true;btn.textContent='Отправляется…';
- try{const res=await fetch(INVOICE_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},body:JSON.stringify({action:'upload',document:{type:'outgoingInvoice',status:'NEW',dateIncoming:date+'T16:00:00',storeId:store.id,counteragentId,comment:'Покупатель по плану: '+buyer,items:items.map(({productId,amount,price})=>({productId,amount,price}))}})});const data=await res.json();if(!res.ok||!data.ok||!data.accepted)throw Error(data.error||'Нет подтверждения iiko');localStorage.setItem(key,'confirmed:'+data.id);btn.textContent='Отправлено';status.textContent='iiko подтвердила накладную '+buyer+', ID '+data.id;}catch(e){btn.textContent='Отправка проверяется';status.textContent='Ошибка: '+String(e.message||e)+'. Повтор заблокирован — проверьте документы в iiko.';}
+ try{const res=await fetch(INVOICE_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},body:JSON.stringify({action:'upload',document:{type:'outgoingInvoice',status:'NEW',dateIncoming:date+'T16:00:00',storeId:store.id,comment:'Покупатель по плану: '+buyer,items:items.map(({productId,amount,price})=>({productId,amount,price}))}})});const data=await res.json();if(!res.ok||!data.ok||!data.accepted)throw Error(data.error||'Нет подтверждения iiko');localStorage.setItem(key,'confirmed:'+data.id);btn.textContent='Отправлено';status.textContent='iiko подтвердила накладную '+buyer+', ID '+data.id;}catch(e){btn.textContent='Отправка проверяется';status.textContent='Ошибка: '+String(e.message||e)+'. Повтор заблокирован — проверьте документы в iiko.';}
 }
 
 async function customerInvoiceLoadCatalog(){
