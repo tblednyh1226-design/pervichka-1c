@@ -219,17 +219,14 @@ function morningFindSections(rows,header){
   return {pastryStart,compoteLast,extrasStart,nextAfterPastry};
 }
 function morningLargePieInPieces(name,weight){
-  // One source-of-truth for cooking acts, transfers and customer invoices.
+  // A full pie is always eight saleable slices, regardless of the weight
+  // recorded in Excel (which may describe a slice rather than the whole pie).
   const dish=morningNorm(name),unit=morningNorm(weight);
-  if(!/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/u.test(dish)||/пирож|мини[\s-]*пирог|маленьк/u.test(dish))return false;
-  if(/(?:^|[\s(])(?:кус(?:ок|очек)?|порц(?:ия|ии)?)(?:$|[\s.)])/u.test(unit))return false;
-  const text=dish+' '+unit;
-  const matches=[...text.matchAll(/(\d+(?:[.,]\d+)?)\s*(кг|гр|г)(?=$|[\s,.)])/gu)];
-  if(matches.length){
-    const grams=matches.map(m=>Number(m[1].replace(',','.'))*(m[2]==='кг'?1000:1));
-    return grams.some(g=>g>=900);
-  }
-  // No stated weight: in the pastry section "Пирог ..." means a whole pie.
+  if(!/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/u.test(dish))return false;
+  if(/пирож|мини[\\s-]*пирог|маленьк/u.test(dish))return false;
+  // Explicitly piece-based rows must never be multiplied again.
+  if(/(?:кус(?:ок|очек|ка|ков|ки)?|порц(?:ия|ии|ий)?)/u.test(unit))return false;
+  if(/(?:за\\s*кус(?:ок)?|порционн|кусочк)/u.test(dish))return false;
   return true;
 }
 function morningExtract(rows,header,col,from,to,warnings,convertLargePies=false){
