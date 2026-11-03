@@ -14,11 +14,17 @@ async function customerInvoiceSend(btn,buyer,lines,select){
  if(!pair?.deviceId||!pair?.token||!store||!/^\d{4}-\d{2}-\d{2}$/.test(date||'')){status.textContent='Подключите MAIN, проверьте склад Бухара кухня и дату.';return;}
  const items=lines.map(x=>{const resolved=typeof iikoDraftResolveProduct==='function'?iikoDraftResolveProduct({name:x.name}):null;return {name:x.name,productId:resolved?.product?.id,amount:x.qty,price:x.price};});
  if(items.some(x=>!x.productId)){status.textContent='Сначала сопоставьте номенклатуру iiko: '+items.filter(x=>!x.productId).map(x=>x.name).slice(0,8).join(', ');return;}
- const key='pomogator-invoice-once:v1:'+pair.deviceId+':'+invoiceHash({buyer,date,store:store.id,counteragentId:counteragentId||'',items});
- if(invoiceSent.has(key)||localStorage.getItem(key)){status.textContent='Отправка этой накладной уже запускалась';return;}
- if(!confirm('Отправить расходную накладную '+buyer+' в iiko без проведения?\nКонтрагент: не указан (выбрать вручную в iiko)\nДата: '+date+'\nПозиций: '+items.length+'\nПовторная отправка будет заблокирована.'))return;
- invoiceSent.add(key);localStorage.setItem(key,'pending');btn.disabled=true;btn.textContent='Отправляется…';
- try{const res=await fetch(INVOICE_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},body:JSON.stringify({action:'upload',document:{type:'outgoingInvoice',status:'NEW',dateIncoming:date+'T16:00:00',storeId:store.id,comment:'Покупатель по плану: '+buyer,items:items.map(({productId,amount,price})=>({productId,amount,price}))}})});const data=await res.json();if(!res.ok||!data.ok||!data.accepted){if(data.rejected){invoiceSent.delete(key);localStorage.removeItem(key);btn.disabled=false;btn.textContent='Отправить в iiko';status.textContent='iiko отклонила накладную: '+(data.error||'ошибка импорта')+'. Документ не создан, повтор доступен.';return;}throw Error(data.error||'Нет подтверждения iiko');}localStorage.setItem(key,'confirmed:'+data.id);btn.textContent='Отправлено';status.textContent='iiko подтвердила накладную '+buyer+', ID '+data.id;}catch(e){btn.textContent='Отправка проверяется';status.textContent='Ошибка: '+String(e.message||e)+'. Повтор заблокирован — проверьте документы в iiko.';}
+ if(btn.disabled)return;
+ if(!confirm('Отправить расходную накладную '+buyer+' в iiko без проведения?\\nКонтрагент не указан.\\nДата: '+date+'\\nПозиций: '+items.length+'.'))return;
+ btn.disabled=true;btn.textContent='Отправляется…';
+ try{
+  const res=await fetch(INVOICE_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},body:JSON.stringify({action:'upload',document:{type:'outgoingInvoice',status:'NEW',dateIncoming:date+'T16:00:00',storeId:store.id,comment:'Покупатель по плану: '+buyer,items:items.map(({productId,amount,price})=>({productId,amount,price}))}})});
+  const data=await res.json();
+  if(!res.ok||!data.ok)throw Error(data.error||'iiko отклонила запрос');
+  status.textContent='Запрос на отправку накладной '+buyer+' выполнен. Наличие документа проверяет администратор.';
+ }catch(e){status.textContent='Ошибка отправки: '+String(e.message||e)+'. Можно повторить запрос.';}
+ finally{btn.disabled=false;btn.textContent='Отправить в iiko';}
+
 }
 
 async function customerInvoiceLoadCatalog(){
@@ -42,19 +48,6 @@ function customerInvoicesPreview(){
  const target=document.getElementById('customerInvoicesResult');
  if(!status||!target)return;
  target.replaceChildren();status.textContent='';
- const reset=document.createElement('button');reset.type='button';reset.textContent='Разблокировать прошлые ошибочные отправки';
- reset.onclick=()=>{
-  const pair=typeof planGuestStored==='function'?planGuestStored():null;
-  if(!pair?.deviceId){status.textContent='Сначала подключите MAIN';return;}
-  const prefix='pomogator-invoice-once:v1:'+pair.deviceId+':';
-  const keys=Object.keys(localStorage).filter(k=>k.startsWith(prefix)&&localStorage.getItem(k)==='pending');
-  if(!keys.length){status.textContent='Нет заблокированных неподтверждённых отправок';return;}
-  if(!confirm('Разблокировать '+keys.length+' неподтверждённых отправок? Делайте это только для накладных, которых нет в iiko. Подтверждённые отправки останутся заблокированными.'))return;
-  keys.forEach(k=>{localStorage.removeItem(k);invoiceSent.delete(k);});
-  status.textContent='Разблокировано: '+keys.length+'. Сформируйте накладные заново и отправляйте по одной.';
-  customerInvoicesPreview();
- };
- target.append(reset);
  const load=document.createElement('button');load.type='button';load.textContent='Обновить покупателей и склады из iiko';load.onclick=customerInvoiceLoadCatalog;target.append(load);
  if(!invoiceCatalog&&!invoiceCatalogLoading&&typeof planGuestStored==='function'&&planGuestStored()?.deviceId){void customerInvoiceLoadCatalog();}
  if(invoiceCatalog){const info=document.createElement('p');info.textContent='iiko: '+invoiceCatalog.counteragents.length+' контрагентов, '+invoiceCatalog.stores.length+' складов. Проверьте соответствия номенклатуры перед отправкой.';target.append(info);}
