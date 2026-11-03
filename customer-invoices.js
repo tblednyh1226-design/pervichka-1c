@@ -103,10 +103,32 @@ function customerInvoicesPreview(){
   return;
  }
  for(const {buyer,columns,lines} of cards){
-  const details=document.createElement('details'),summary=document.createElement('summary');
+  const details=document.createElement('details');
+  details.className='card';
+  details.style.cssText='margin:12px 0;padding:16px;border:1px solid #e3e7ef;border-radius:12px;background:#fff';
+  const summary=document.createElement('summary');
+  summary.style.cssText='list-style:none;cursor:pointer;display:block';
   const total=lines.reduce((v,x)=>v+x.amount,0);
-  summary.textContent=buyer+' — '+lines.length+' поз., '+total.toFixed(2)+' руб.';
-  details.append(summary);
+  const top=document.createElement('div');
+  top.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap';
+  const info=document.createElement('div');
+  info.style.cssText='display:grid;grid-template-columns:repeat(3,minmax(110px,1fr));gap:18px;flex:1';
+  for(const [label,value] of [['Покупатель',buyer],['Количество',String(lines.reduce((n,x)=>n+x.qty,0))],['Сумма, ₽',total.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})]]){
+    const field=document.createElement('div');
+    const small=document.createElement('div');small.textContent=label;small.style.cssText='color:#64748b;font-size:12px';
+    const strong=document.createElement('strong');strong.textContent=value;
+    field.append(small,strong);info.append(field);
+  }
+  const btn=document.createElement('button');
+  btn.type='button';btn.textContent='Отправить в iiko';
+  btn.disabled=!invoiceCatalog?.stores?.some(x=>/бухара\\s*кухня/i.test(x.name));
+  btn.title=btn.disabled?'Сначала загрузите склад Бухара кухня из iiko':'Создать непроведённую накладную, контрагент необязателен';
+  btn.style.cssText='background:#0878d9;color:white;border:0;border-radius:8px;padding:12px 16px;font-weight:600;cursor:pointer';
+  btn.onclick=e=>{e.preventDefault();e.stopPropagation();customerInvoiceSend(btn,buyer,lines,details.querySelector('select'));};
+  top.append(info,btn);
+  const hint=document.createElement('div');hint.textContent='▸ Проверить блюда и количество ('+lines.length+' поз.)';hint.style.cssText='margin-top:12px;font-weight:600';
+  summary.append(top,hint);details.append(summary);
+  details.addEventListener('toggle',()=>{hint.textContent=(details.open?'▾':'▸')+' Проверить блюда и количество ('+lines.length+' поз.)';});
   const table=document.createElement('table'),header=document.createElement('tr');
   for(const name of ['Блюдо','Количество','Цена, руб.','Сумма, руб.']){
    const th=document.createElement('th');th.textContent=name;header.append(th);
@@ -121,10 +143,12 @@ function customerInvoicesPreview(){
    if(line.conversionFactor===8){const note=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=4;cell.textContent='Большой пирог: '+line.sourceQuantity+' × 8 = '+line.qty+' кусков';note.append(cell);table.append(note);}
   }
   details.append(table);
-  let select=null;
-  if(invoiceCatalog){const candidates=invoiceCatalog.counteragents.filter(x=>norm(x.name)===norm(buyer));select=document.createElement('select');select.setAttribute('aria-label','Контрагент iiko для '+buyer);const empty=document.createElement('option');empty.value='';empty.textContent='Выберите контрагента iiko';select.append(empty);for(const x of invoiceCatalog.counteragents){const option=document.createElement('option');option.value=x.id;option.textContent=x.name;select.append(option)}select.value=candidates.length===1?candidates[0].id:'';details.append(select);}
-
-  const btn=document.createElement('button');btn.type='button';btn.textContent='Выгрузить в iiko';btn.disabled=!invoiceCatalog?.stores?.some(x=>/бухара\s*кухня/i.test(x.name));btn.title=btn.disabled?'Сначала загрузите склад Бухара кухня из iiko':'Создать непроведённую накладную, контрагент необязателен';btn.onclick=()=>customerInvoiceSend(btn,buyer,lines,select);details.append(btn);
+  if(invoiceCatalog?.counteragents?.length){
+   const select=document.createElement('select');select.setAttribute('aria-label','Контрагент iiko для '+buyer);
+   const empty=document.createElement('option');empty.value='';empty.textContent='Без контрагента — покупатель в комментарии';select.append(empty);
+   for(const x of invoiceCatalog.counteragents){const option=document.createElement('option');option.value=x.id;option.textContent=x.name;select.append(option)}
+   details.append(select);
+  }
   target.append(details);
  }
  const med='«Мед экспресс» исключён из накладных.';
