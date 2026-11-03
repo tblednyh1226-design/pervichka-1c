@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<title>Списания Колхоз · Помогатор</title>
+<title>Колхоз — Бланк списания</title>
 <style>
 :root{font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;color:#202b39;background:#f4f6fa;font-size:15px}
 *{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button{cursor:pointer;border:1px solid #d8dee8;background:white;color:#20344b;border-radius:9px;padding:10px 13px}button:hover{background:#f1f5fb}button:disabled{opacity:.48;cursor:not-allowed}
@@ -44,10 +44,12 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 }
 .journal-link{display:inline-flex;align-items:center;justify-content:center;border:1px solid #d8dee8;border-radius:9px;padding:10px 13px;background:#fff;text-decoration:none;color:#244d87;font-weight:650}
 .journal-link:hover{background:#f1f5fb}
+.staff-header-label{color:#63738a;font-size:13px;font-weight:600;text-align:right}
+@media(max-width:720px){.staff-header-label{font-size:12px}}
 </style>
 </head>
 <body>
-<header><div><b>Помогатор · Списания Колхоз</b><small>Учёт списаний и журнал документов</small></div><a href="./index.html">← В Помогатор</a></header>
+<header><div><b>КОЛХОЗ</b><small>Бланк списания продукции и сырья</small></div><span class="staff-header-label">Форма для сотрудников</span></header>
 <main>
  <div class="top"><div><h1>Списание номенклатуры</h1><p class="muted">Накапливайте позиции в черновике и отправляйте готовое списание в журнал. Передача в 1С пока не выполняется.</p></div><span id="stateBadge" class="status">Подключение…</span></div>
  <p id="notice" class="notice" role="status">Открываю страницу и загружаю справочник номенклатуры…</p>
@@ -70,8 +72,7 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
    </section>
   </fieldset>
   <datalist id="catalog"></datalist><datalist id="reasons"><option value="Порча"></option><option value="Брак"></option><option value="Просрочка"></option><option value="Недостача"></option><option value="Технологические потери"></option><option value="Питание персонала"></option><option value="Прочее"></option></datalist>
-  <section class="card"><div class="toolbar"><button type="button" id="saveBtn">Сохранить черновик</button><button type="button" id="submitBtn" class="primary">Отправить в журнал</button><button type="button" id="printBtn" class="primary">Печать / PDF</button><button type="button" id="excelBtn">Скачать Excel</button><a href="./index.html#journal" class="journal-link">Журнал документов</a><span id="catalogStatus" class="muted"></span></div><p id="actionStatus" class="notice" role="status">Заполните списание и отправьте в журнал документов.</p><p class="muted">Выберите причину в каждой строке. Без входа журнал сохраняется в этом браузере; при уже действующей сессии Помогатора — в общем облачном журнале. Отправленные списания не редактируются.</p></section>
-  <p class="muted">Все списания теперь находятся в общем <a href="./index.html#journal">Журнале документов</a> Помогатора.</p>
+  <section class="card"><div class="toolbar"><button type="button" id="saveBtn">Сохранить черновик</button><button type="button" id="submitBtn" class="primary">Отправить в журнал</button><button type="button" id="printBtn" class="primary">Печать / PDF</button><button type="button" id="excelBtn">Скачать Excel</button><span id="catalogStatus" class="muted"></span></div><p id="actionStatus" class="notice" role="status">Заполните списание и отправьте в журнал документов.</p><p class="muted">Выберите причину в каждой строке. Без входа журнал сохраняется в этом браузере; при уже действующей сессии Помогатора — в общем облачном журнале. Отправленные списания не редактируются.</p></section>
   <section class="card" hidden aria-hidden="true"><div class="sectiontitle"><h2>Журнал списаний</h2><button id="reloadBtn" type="button">Обновить</button></div>
    <div class="formgrid"><label>Статус<select id="statusFilter"><option value="">Все</option><option value="draft">Черновики</option><option value="submitted">Отправленные</option></select></label><label>Дата с<input id="dateFrom" type="date"></label><label>Дата по<input id="dateTo" type="date"></label></div>
    <div id="journal" class="empty">Загружаю журнал…</div><p id="journalCount" class="muted"></p>
