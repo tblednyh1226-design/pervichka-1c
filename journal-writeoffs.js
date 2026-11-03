@@ -16,6 +16,14 @@ function generalJournalLocalWriteoffs(){
 async function renderKolhozJournal(){
  const dest=document.getElementById('kolhozUnifiedJournal');
  if(!dest)return;
+ const card=dest.parentElement;
+ if(card&&!card.querySelector('#refreshKolhozJournal')){
+  const button=document.createElement('button');
+  button.id='refreshKolhozJournal';button.type='button';
+  button.textContent='Обновить списания';
+  button.addEventListener('click',()=>renderKolhozJournal().catch(console.error));
+  card.insertBefore(button,dest);
+ }
  dest.textContent='Загружаю списания «Колхоза»…';
  let cloud=[],warning='';
  try{
@@ -53,3 +61,9 @@ async function renderKolhozJournal(){
    +'</div>';
  }).join('')+(warning?'<p class="muted">'+esc(warning)+'</p>':'');
 }
+
+// While the general journal remains open, refresh new staff documents periodically.
+setInterval(()=>{
+ const pane=document.getElementById('journal');
+ if(pane&&!pane.hidden)renderKolhozJournal().catch(console.error);
+},30000);
