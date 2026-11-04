@@ -110,13 +110,63 @@ function iikoDraftRenderSaved(){
   const rows=iikoDraftState.mappingRows.map(([key,p],i)=>
     '<tr><td>'+iikoDraftHtml(key)+'</td><td>'+iikoDraftHtml(p.target_name)+
     '</td><td>'+iikoDraftHtml(p.target_article||p.target_id||'')+
-    '</td><td><button onclick="iikoDraftDeleteMapping('+i+')">Удалить</button></td></tr>').join('');
+    '</td><td><button onclick="iikoDraftEditMapping('+i+')">Изменить</button> '+
+    '<button onclick="iikoDraftDeleteMapping('+i+')">Удалить</button></td></tr>'+
+    (iikoDraftState.editingMapping===key?'<tr><td colspan="4"><label>Найти другое блюдо iiko <input id="iikoSavedFind" type="search" placeholder="Название или артикул" oninput="iikoDraftFilterSavedChoices()"></label> '+
+      '<label><input id="iikoSavedAllTypes" type="checkbox" onchange="iikoDraftFilterSavedChoices()"> Все типы</label> '+
+      '<select id="iikoSavedChoose"><option value="">Введите название или артикул</option></select> '+
+      '<button onclick="iikoDraftSaveEditedMapping()">Сохранить соответствие</button> '+
+      '<button onclick="iikoDraftCancelEditMapping()">Отмена</button>'+
+      '<p id="iikoSavedEditStatus" class="muted"></p></td></tr>':'')).join('');
   el.innerHTML='<details><summary>Запомненные соответствия ('+
     iikoDraftState.mappings.size+')</summary>'+
     (iikoDraftState.mappingError?'<p>'+iikoDraftHtml(iikoDraftState.mappingError)+'</p>':'')+
     (rows?'<div class="tablewrap"><table class="nomtable"><thead><tr><th>Название в плане (до скобок)</th><th>Номенклатура iiko</th><th>Артикул / ID</th><th></th></tr></thead><tbody>'+
       rows+'</tbody></table></div>':'<p>Пока нет вручную подтверждённых соответствий.</p>')+
     '</details>';
+}
+function iikoDraftEditMapping(index){
+  const item=iikoDraftState.mappingRows[index];if(!item)return;
+  iikoDraftState.editingMapping=item[0];iikoDraftRenderSaved();
+  document.getElementById('iikoSavedFind')?.focus();
+}
+function iikoDraftCancelEditMapping(){
+  iikoDraftState.editingMapping='';iikoDraftRenderSaved();
+}
+function iikoDraftFilterSavedChoices(){
+  const input=document.getElementById('iikoSavedFind');
+  const picker=document.getElementById('iikoSavedChoose');
+  if(!picker)return;
+  const query=String(input?.value||'').trim();
+  if(!query){picker.innerHTML='<option value="">Введите название или артикул</option>';return;}
+  const all=Boolean(document.getElementById('iikoSavedAllTypes')?.checked);
+  const choices=iikoDraftState.catalogList.map((product,index)=>{
+    const type=String(product.type||'').toUpperCase();
+    if(!all&&type&&!['DISH','PREPARED'].includes(type))return null;
+    const score=iikoDraftChoiceScore(product,query);
+    return score>0?{product,index,score}:null;
+  }).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,30);
+  picker.innerHTML='<option value="">'+(choices.length?'Выберите блюдо iiko':'Совпадений нет — проверьте подключение к iiko')+'</option>'+
+    choices.map(({product,index})=>'<option value="'+index+'">'+iikoDraftHtml(product.name)+
+      (product.article?' · '+iikoDraftHtml(product.article):'')+'</option>').join('');
+}
+async function iikoDraftSaveEditedMapping(){
+  const key=iikoDraftState.editingMapping;
+  const picker=document.getElementById('iikoSavedChoose');
+  const status=document.getElementById('iikoSavedEditStatus');
+  const value=String(picker?.value||'');
+  const product=value!==''?iikoDraftState.catalogList[Number(value)]:null;
+  if(!key||!product){if(status)status.textContent='Выберите блюдо iiko.';return;}
+  if(product.type&&!['DISH','PREPARED'].includes(String(product.type).toUpperCase())&&
+    !window.confirm('Это не блюдо или заготовка. Всё равно сохранить?'))return;
+  if(status)status.textContent='Сохраняю изменение на MAIN…';
+  try{
+    await iikoDraftSaveMapping(key,product);
+    iikoDraftState.editingMapping='';
+    iikoDraftRenderSaved();
+    const message=document.getElementById('iikoDraftStatus');
+    if(message)message.textContent='Соответствие обновлено для актов приготовления и перемещений.';
+  }catch(e){if(status)status.textContent='Ошибка сохранения: '+String(e.message||e);}
 }
 // Show relevant results only, never the first arbitrary 70 catalog items.
 function iikoDraftChoiceTokens(s){
