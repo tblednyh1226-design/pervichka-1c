@@ -558,8 +558,14 @@ function productionBuild(){
    const entry={code:String(row[0]??'').trim(),name,
       weight:String(row[2]??'').trim(),sourceRow:i+1};
    let quantities=new Map();
+   // Pastry headings may collapse ETM DAY and ETM NIGHT into one column.
+   // Never count the same physical Excel cell twice for one destination.
+   const seenReceiverCells=new Set();
    for(const target of columns){
      const targetCol=isPastry?productionPastryReceiverColumn(target,context):target.col;
+     const cellKey=target.point+'|'+targetCol;
+     if(seenReceiverCells.has(cellKey))continue;
+     seenReceiverCells.add(cellKey);
      const raw=row[targetCol],count=productionQuantity(raw);
      if(!productionBlankQuantity(raw)&&count===null){
        invalidValues.push('Строка '+(i+1)+': '+target.name+
