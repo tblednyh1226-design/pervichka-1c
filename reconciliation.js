@@ -162,12 +162,50 @@ function reconParseText(text,side,source,sheet){
   if(!out.entries.length)out.warnings.push(source+': не удалось надёжно выделить даты и суммы. Проверьте текст распознавания.');
   return out;
 }
+
+function reconOcrColumns(tsv){
+  if(!tsv)return null;
+  const lines=tsv.split(/\r?\n/).slice(1),group=new Map();
+  let pageWidth=0;
+  for(const line of lines){
+    const c=line.split('\t');if(c.length<12)continue;
+    const level=Number(c[0]),left=Number(c[6]),top=Number(c[7]),width=Number(c[8]);
+    if(level===1 && width>pageWidth)pageWidth=width;
+    if(level!==5||!c.slice(11).join('\t').trim())continue;
+    const key=[c[1],c[2],c[3],c[4]].join(':');
+    if(!group.has(key))group.set(key,{top,words:[]});
+    group.get(key).words.push({left,top,word:c.slice(11).join('\t').trim()});
+  }
+  if(pageWidth<200)return null;
+  const chunks={left:[],right:[]};
+  for(const line of [...group.values()].sort((a,b)=>a.top-b.top)){
+    for(const side of ['left','right']){
+      const words=line.words.filter(w=>side==='left'?w.left<pageWidth/2:w.left>=pageWidth/2).sort((a,b)=>a.left-b.left);
+      if(words.length)chunks[side].push(words.map(x=>x.word).join(' '));
+    }
+  }
+  return {left:chunks.left.join('\n'),right:chunks.right.join('\n')};
+}
+function reconOcrParsed(ocr,side,source,sheet){
+  const leftDefault=reconParseText(ocr.text,side,source,sheet);
+  let left=leftDefault,right=null,pivot=0;
+  if(ocr.columns){
+    const l=reconParseText(ocr.columns.left,side,source,sheet);
+    const r=reconParseText(ocr.columns.right,side,source,sheet);
+    if(l.entries.length && r.entries.length && l.entries.length+r.entries.length>=3){
+      left=l;right=r;pivot=1;
+    }
+  }
+  if(ocr.confidence<65)left.warnings.push(source+': невысокая точность OCR ('+Math.round(ocr.confidence)+'%). Проверьте найденные суммы и даты.');
+  return {left,right,pivot};
+}
+
 let reconOcrWorker=null;
 async function reconOcr(image){
   if(typeof Tesseract==='undefined')throw new Error('Не загрузилась библиотека распознавания фото');
   if(!reconOcrWorker)reconOcrWorker=await Tesseract.createWorker('rus+eng',1);
-  const r=await reconOcrWorker.recognize(image);
-  return {text:r.data.text||'',confidence:Number(r.data.confidence)||0};
+  const r=await reconOcrWorker.recognize(image,{}, {text:true,tsv:true});
+  return {text:r.data.text||'',confidence:Number(r.data.confidence)||0,columns:reconOcrColumns(r.data.tsv)};
 }
 async function reconParsePdf(file,side,progress){
   if(typeof pdfjsLib==='undefined')throw new Error('Не загрузилась библиотека PDF');
@@ -189,19 +227,27 @@ async function reconParsePdf(file,side,progress){
       }
       lines.sort((a,b)=>b.y-a.y);
       let raw=lines.map(l=>l.parts.sort((a,b)=>a.x-b.x).map(x=>x.s).join(' ')).join('\n');
-      let confidence=100,sourceType='pdf-text';
-      if(raw.trim().length<80){
+      let sourceType='pdf-text',parse=reconParseText(raw,side,file.name,'Стр. '+p);
+      let right=null,pivot=0;
+      const pageWidth=page.view[2]-page.view[0],middle=page.view[0]+pageWidth/2;
+      const leftRows=lines.map(l=>l.parts.filter(x=>x.x<middle).sort((a,b)=>a.x-b.x).map(x=>x.s).join(' ')).filter(Boolean).join('\n');
+      const rightRows=lines.map(l=>l.parts.filter(x=>x.x>=middle).sort((a,b)=>a.x-b.x).map(x=>x.s).join(' ')).filter(Boolean).join('\n');
+      const lp=reconParseText(leftRows,side,file.name,'Стр. '+p),rp=reconParseText(rightRows,side,file.name,'Стр. '+p);
+      if(lp.entries.length && rp.entries.length && lp.entries.length+rp.entries.length>=3){
+        parse=lp;right=rp;pivot=1;
+      }
+      if(!parse.entries.length && !right){
         const viewport=page.getViewport({scale:1.8});
         const canvas=document.createElement('canvas');
         canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
         await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
         const out=await reconOcr(canvas);
-        raw=out.text;confidence=out.confidence;sourceType='pdf-ocr';
+        raw=out.text;sourceType='pdf-ocr';
+        const detected=reconOcrParsed(out,side,file.name,'Стр. '+p);
+        parse=detected.left;right=detected.right;pivot=detected.pivot;
         canvas.width=0;canvas.height=0;
       }
-      const parse=reconParseText(raw,side,file.name,'Стр. '+p);
-      if(confidence<65 && sourceType==='pdf-ocr')parse.warnings.push(file.name+': страница '+p+' — низкая точность OCR ('+Math.round(confidence)+'%).');
-      docs.push({side,source:file.name,sheet:'Стр. '+p,pivot:0,sourceType,raw,left:parse,right:null});
+      docs.push({side,source:file.name,sheet:'Стр. '+p,pivot,sourceType,raw,left:parse,right});
     }
   }finally{await pdf.destroy();}
   return docs;
@@ -212,9 +258,8 @@ async function reconParseFile(file,side,progress){
   if(ext==='pdf')return reconParsePdf(file,side,progress);
   if(file.type.startsWith('image/')||['png','jpg','jpeg','webp','bmp','tif','tiff'].includes(ext)){
     const ocr=await reconOcr(file);
-    const left=reconParseText(ocr.text,side,file.name,'Фото');
-    if(ocr.confidence<65)left.warnings.push(file.name+': качество распознавания '+Math.round(ocr.confidence)+'%.');
-    return [{side,source:file.name,sheet:'Фото',pivot:0,sourceType:'ocr',raw:ocr.text,left,right:null}];
+    const p=reconOcrParsed(ocr,side,file.name,'Фото');
+    return [{side,source:file.name,sheet:'Фото',sourceType:'ocr',raw:ocr.text,...p}];
   }
   if(['txt'].includes(ext)){
     const raw=await file.text();
@@ -350,8 +395,9 @@ function reconBuildResult(){
     if(d.side==='a')listA.push(...data.entries);
     else listB.push(...data.entries);
     if(autoRight && d.side==='a'&&d.right){
-      listB.push(...d.right.entries.map(x=>({...x,side:'b'})));
-      warnings.push(...d.right.warnings);
+      const opposite=document.getElementById('reconColumnA')?.value==='right'?d.left:d.right;
+      listB.push(...opposite.entries.map(x=>({...x,side:'b'})));
+      warnings.push(...opposite.warnings);
     }
   }
   warnings.push(...reconDuplicates(listA,'a'),...reconDuplicates(listB,'b'));
@@ -370,7 +416,7 @@ function reconBuildResult(){
   const differences=report.filter(r=>r.status!=='Совпадает');
   const summary='<div class="recon-stats"><div><b>'+listA.length+'</b><span>У нас</span></div><div><b>'+listB.length+'</b><span>У контрагента</span></div><div><b>'+report.filter(r=>r.status==='Совпадает').length+'</b><span>Совпало</span></div><div><b>'+differences.length+'</b><span>Расхождений / проверки</span></div></div>';
   const rows=differences.map(r=>'<tr><td><b>'+reconHtml(r.status)+'</b></td><td>'+reconHtml(r.a?.date||'—')+'</td><td>'+reconHtml(r.a?.number||'—')+'</td><td>'+reconHtml(r.a?.desc||'—')+'</td><td>'+reconFormatMoney(r.a?.amount)+'</td><td>'+reconHtml(r.b?.date||'—')+'</td><td>'+reconHtml(r.b?.number||'—')+'</td><td>'+reconHtml(r.b?.desc||'—')+'</td><td>'+reconFormatMoney(r.b?.amount)+'</td><td>'+reconFormatMoney(r.diff)+'</td><td>'+reconHtml(r.note||'')+'</td></tr>').join('');
-  const balance=reconBalanceSummary(reconControls(docs.filter(d=>d.side==='a'),'a',false),autoRight?docs.filter(d=>d.right).flatMap(d=>d.right.balances):reconControls(docs.filter(d=>d.side==='b'),'b',false),tol);
+  const balance=reconBalanceSummary(reconControls(docs.filter(d=>d.side==='a'),'a',false),autoRight?docs.filter(d=>d.side==='a'&&d.right).flatMap(d=>(document.getElementById('reconColumnA')?.value==='right'?d.left:d.right).balances):reconControls(docs.filter(d=>d.side==='b'),'b',false),tol);
   result.innerHTML=summary+(differences.length?'<h3>Выявленные расхождения</h3><div class="tablewrap"><table class="nomtable"><thead><tr><th>Тип</th><th>Дата у нас</th><th>№ у нас</th><th>Документ у нас</th><th>Сумма у нас</th><th>Дата у контрагента</th><th>№ контрагента</th><th>Документ контрагента</th><th>Сумма контрагента</th><th>Разница, ₽</th><th>Примечание</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p class="recon-success">По распознанным операциям расхождений не обнаружено.</p>')+
     (balance?'<h3>Контроль сальдо</h3><div class="recon-balance">'+balance+'</div>':'')+
     '<button type="button" class="primary" onclick="reconExport()">Скачать результат в Excel</button>';
