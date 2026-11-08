@@ -3,11 +3,11 @@
 /* Акты сверки — клиентская обработка: документы не отправляются на сервер. */
 const reconState = {a:[], b:[], parsed:[], report:[], issues:[], busy:false, aItems:[], bItems:[]};
 const reconDateRx = /\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/;
-const reconMoneyRx = /-?(?:\d{1,3}(?:[\s\u00a0\u202f]\d{3})+|\d+)[,.]\d{2}\b/g;
+const reconMoneyRx = /(?<![\d.\/-])-?(?:\d{1,3}(?:[\s\u00a0\u202f]\d{3})+|\d+)[,.]\d{2}(?![\d.\/-])/g;
 function reconHtml(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function reconMoney(v){
   if(typeof v==='number') return Number.isFinite(v)?v:null;
-  let s=String(v??'').replace(/\u2212/g,'-').replace(/[\s\u00a0\u202f₽р]/g,'').replace(/руб\.?/gi,'').trim();
+  let s=String(v??'').replace(/\u2212/g,'-').replace(/руб(?:лей|ля|ль)?\.?/gi,'').replace(/[\s\u00a0\u202f₽]/g,'').trim();
   if(!s || !/^-?[\d.,]+$/.test(s))return null;
   const comma=s.lastIndexOf(','),dot=s.lastIndexOf('.');
   if(comma>=0 && dot>=0)s=comma>dot?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');
@@ -18,10 +18,11 @@ function reconMoney(v){
 }
 function reconDate(v){
   const s=String(v??'').trim();
-  const m=s.match(reconDateRx);
-  if(!m)return '';
-  let year=Number(m[3]);if(year<100)year+=year>=70?1900:2000;
-  const d=Number(m[1]),mo=Number(m[2]);
+  const iso=s.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  const m=iso?null:s.match(reconDateRx);
+  if(!iso&&!m)return '';
+  let year=Number(iso?iso[1]:m[3]);if(year<100)year+=year>=70?1900:2000;
+  const d=Number(iso?iso[3]:m[1]),mo=Number(iso?iso[2]:m[2]);
   if(mo<1||mo>12||d<1||d>31)return '';
   const date=new Date(Date.UTC(year,mo-1,d));
   if(date.getUTCDate()!==d||date.getUTCMonth()!==mo-1)return '';
@@ -44,7 +45,7 @@ function reconKind(s){
 function reconLabelKind(k){return {payment:'Оплата',invoice:'Отгрузка / услуги',correction:'Корректировка',other:'Документ'}[k]||'Документ';}
 function reconLooksBalance(t){return /сальдо|остаток (?:на|по)|задолженность (?:на|по)/i.test(t);}
 function reconLooksTurnover(t){return /оборот(?:ы|ов)? за|итого (?:за|по|дебет|кредит)|всего за период/i.test(t);}
-function reconCleanDesc(s){return String(s??'').replace(reconDateRx,' ').replace(reconMoneyRx,' ').replace(/\s+/g,' ').trim();}
+function reconCleanDesc(s){return String(s??'').replace(reconDateRx,' ').replace(/\b\d{4}-\d{2}-\d{2}\b/g,' ').replace(reconMoneyRx,' ').replace(/\s+/g,' ').trim();}
 function reconEntry(raw,side,source,sheet,amount,direction){
   const date=reconDate(raw),desc=reconCleanDesc(raw);
   const id=reconNum(raw);
@@ -245,6 +246,8 @@ function reconSimilarity(a,b){
 function reconPairScore(a,b,tol){
   const numbered=reconSameNum(a,b),gap=reconDayGap(a.date,b.date),diff=Math.abs(a.amount-b.amount),similarity=reconSimilarity(a,b);
   if(a.number && b.number && !numbered)return -1;
+  if(numbered && gap>31 && a.date && b.date)return -1;
+  if(a.kind!=='other' && b.kind!=='other' && a.kind!==b.kind)return -1;
   if(!numbered && gap>7)return -1;
   if(!numbered && diff>tol && !(gap===0 && similarity>=0.5))return -1;
   if(!numbered && diff<=tol && gap>3 && similarity<0.5)return -1;
@@ -357,6 +360,7 @@ function reconBuildResult(){
   if(!listA.length||!listB.length){
     reconState.report=[];
     result.innerHTML='<p class="recon-error">Недостаточно данных для сверки: найдено '+listA.length+' операций у нас и '+listB.length+' у контрагента. Загрузите документы обеих сторон (или один двусторонний Excel) и проверьте распознавание.</p>';
+    document.getElementById('reconQuality').innerHTML=warnings.length?'<h3>Нужно проверить</h3><ul>'+warnings.map(x=>'<li>'+reconHtml(x)+'</li>').join('')+'</ul>':'';
     reconShowPreview(docs);
     return;
   }
