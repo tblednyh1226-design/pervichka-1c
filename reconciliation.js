@@ -188,16 +188,16 @@ function reconOcrColumns(tsv){
 }
 function reconOcrParsed(ocr,side,source,sheet){
   const leftDefault=reconParseText(ocr.text,side,source,sheet);
-  let left=leftDefault,right=null,pivot=0;
+  let left=leftDefault,right=null,pivot=0,leftText=null,rightText=null;
   if(ocr.columns){
     const l=reconParseText(ocr.columns.left,side,source,sheet);
     const r=reconParseText(ocr.columns.right,side,source,sheet);
     if(l.entries.length && r.entries.length && l.entries.length+r.entries.length>=3){
-      left=l;right=r;pivot=1;
+      left=l;right=r;pivot=1;leftText=ocr.columns.left;rightText=ocr.columns.right;
     }
   }
   if(ocr.confidence<65)left.warnings.push(source+': невысокая точность OCR ('+Math.round(ocr.confidence)+'%). Проверьте найденные суммы и даты.');
-  return {left,right,pivot};
+  return {left,right,pivot,leftText,rightText};
 }
 
 let reconOcrWorker=null;
@@ -228,13 +228,13 @@ async function reconParsePdf(file,side,progress){
       lines.sort((a,b)=>b.y-a.y);
       let raw=lines.map(l=>l.parts.sort((a,b)=>a.x-b.x).map(x=>x.s).join(' ')).join('\n');
       let sourceType='pdf-text',parse=reconParseText(raw,side,file.name,'Стр. '+p);
-      let right=null,pivot=0;
+      let right=null,pivot=0,leftText=null,rightText=null;
       const pageWidth=page.view[2]-page.view[0],middle=page.view[0]+pageWidth/2;
       const leftRows=lines.map(l=>l.parts.filter(x=>x.x<middle).sort((a,b)=>a.x-b.x).map(x=>x.s).join(' ')).filter(Boolean).join('\n');
       const rightRows=lines.map(l=>l.parts.filter(x=>x.x>=middle).sort((a,b)=>a.x-b.x).map(x=>x.s).join(' ')).filter(Boolean).join('\n');
       const lp=reconParseText(leftRows,side,file.name,'Стр. '+p),rp=reconParseText(rightRows,side,file.name,'Стр. '+p);
       if(lp.entries.length && rp.entries.length && lp.entries.length+rp.entries.length>=3){
-        parse=lp;right=rp;pivot=1;
+        parse=lp;right=rp;pivot=1;leftText=leftRows;rightText=rightRows;
       }
       if(!parse.entries.length && !right){
         const viewport=page.getViewport({scale:1.8});
@@ -244,10 +244,10 @@ async function reconParsePdf(file,side,progress){
         const out=await reconOcr(canvas);
         raw=out.text;sourceType='pdf-ocr';
         const detected=reconOcrParsed(out,side,file.name,'Стр. '+p);
-        parse=detected.left;right=detected.right;pivot=detected.pivot;
+        parse=detected.left;right=detected.right;pivot=detected.pivot;leftText=detected.leftText;rightText=detected.rightText;
         canvas.width=0;canvas.height=0;
       }
-      docs.push({side,source:file.name,sheet:'Стр. '+p,pivot,sourceType,raw,left:parse,right});
+      docs.push({side,source:file.name,sheet:'Стр. '+p,pivot,sourceType,raw,left:parse,right,leftText,rightText});
     }
   }finally{await pdf.destroy();}
   return docs;
@@ -375,13 +375,24 @@ function reconShowPreview(docs){
     return '<details class="recon-doc"><summary>'+reconHtml(d.source)+' · '+reconHtml(d.sheet)+' · '+parse.entries.length+' операций'+(d.pivot?' · две стороны':'')+'</summary>'+
       '<div class="muted">Найденные операции: '+parse.entries.length+'. Сальдо и оборотов: '+parse.balances.length+'.</div>'+
       (parse.entries.length?'<div class="tablewrap"><table class="nomtable"><thead><tr><th>Дата</th><th>Номер</th><th>Операция</th><th>Сумма</th></tr></thead><tbody>'+parse.entries.slice(0,120).map(x=>'<tr><td>'+reconHtml(x.date)+'</td><td>'+reconHtml(x.number)+'</td><td>'+reconHtml(x.desc)+'</td><td>'+reconFormatMoney(x.amount)+'</td></tr>').join('')+'</tbody></table></div>':'<p class="recon-error">Строки операций не обнаружены.</p>')+
-      (d.raw?'<label>Распознанный текст (можно исправить и пересчитать)<textarea id="reconRaw'+i+'" rows="7">'+reconHtml(d.raw)+'</textarea></label><button type="button" onclick="reconApplyText('+i+')">Применить исправления</button>':'')+'</details>';
+      (d.raw?(d.pivot&&d.leftText!==null&&d.rightText!==null?
+        '<label>Левая сторона<textarea id="reconRawLeft'+i+'" rows="7">'+reconHtml(d.leftText)+'</textarea></label><label>Правая сторона<textarea id="reconRawRight'+i+'" rows="7">'+reconHtml(d.rightText)+'</textarea></label>':
+        '<label>Распознанный текст (можно исправить и пересчитать)<textarea id="reconRaw'+i+'" rows="7">'+reconHtml(d.raw)+'</textarea></label>')+
+        '<button type="button" onclick="reconApplyText('+i+')">Применить исправления</button>':'')+'</details>';
   }).join('');
 }
 function reconApplyText(index){
   const doc=reconState.parsed[index];if(!doc||!doc.raw)return;
-  const el=document.getElementById('reconRaw'+index);if(!el)return;
-  doc.raw=el.value;doc.left=reconParseText(el.value,doc.side,doc.source,doc.sheet);
+  if(doc.pivot && doc.leftText!==null && doc.rightText!==null){
+    const a=document.getElementById('reconRawLeft'+index),b=document.getElementById('reconRawRight'+index);
+    if(!a||!b)return;
+    doc.leftText=a.value;doc.rightText=b.value;
+    doc.left=reconParseText(a.value,doc.side,doc.source,doc.sheet);
+    doc.right=reconParseText(b.value,doc.side,doc.source,doc.sheet);
+  }else{
+    const el=document.getElementById('reconRaw'+index);if(!el)return;
+    doc.raw=el.value;doc.left=reconParseText(el.value,doc.side,doc.source,doc.sheet);
+  }
   reconBuildResult();
   reconStatus('Исправленный текст применён. Расхождения пересчитаны.');
 }
@@ -410,7 +421,8 @@ function reconBuildResult(){
     reconShowPreview(docs);
     return;
   }
-  const tol=Math.max(0,Number(document.getElementById('reconTolerance').value)||0.01);
+  const rawTol=Number(document.getElementById('reconTolerance').value);
+  const tol=Number.isFinite(rawTol)?Math.max(0,rawTol):0.01;
   const report=reconCompare(listA,listB,tol);
   reconState.report=report;
   const differences=report.filter(r=>r.status!=='Совпадает');
