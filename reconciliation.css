@@ -1,0 +1,40 @@
+
+/* Модуль «Акты сверки»: изолированные стили. */
+.recon-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.recon-columns .card{margin-top:0}
+.recon-columns h3{margin-top:0}
+.recon-columns select{margin-top:5px}
+.recon-file{display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid #e5e7eb;padding:9px 0;word-break:break-word;font-size:13px}
+.recon-file:last-child{border-bottom:0}
+.recon-file button{flex:0 0 auto;border:1px solid #fda29b;background:white;color:#b42318;border-radius:7px;padding:6px 10px;cursor:pointer}
+.recon-panel h3{margin:10px 0 14px}
+.recon-panel textarea{display:block;width:100%;font:13px/1.45 monospace;padding:12px;border:1px solid #d0d5dd;border-radius:8px;margin-top:8px;white-space:pre;min-height:130px}
+.recon-panel input[type=number]{padding:10px;border:1px solid #d0d5dd;border-radius:8px;width:160px;max-width:100%}
+.recon-panel .drop input{margin-top:10px}
+.recon-panel button:disabled{opacity:.55;cursor:wait}
+.recon-settings{display:flex;align-items:end;gap:16px;flex-wrap:wrap}
+.recon-settings label{margin:0}
+.recon-settings button{min-height:43px}
+.recon-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:14px 0 20px}
+.recon-stats div{background:#f8fafc;border:1px solid #eaecf0;border-radius:10px;padding:14px}
+.recon-stats b{font-size:25px;display:block;color:#344054}
+.recon-stats span{color:#667085;font-size:12px}
+.recon-error{padding:12px 14px;background:#fff6f6;border-left:3px solid #f04438;color:#b42318}
+.recon-success{padding:12px 14px;background:#f0fdf4;border-left:3px solid #12b76a;color:#05603a}
+.recon-balance{display:grid;gap:8px;margin-bottom:20px}
+.recon-doc{padding:12px 0;border-bottom:1px solid #e5e7eb}
+.recon-doc>summary{cursor:pointer;font-weight:600;margin-bottom:12px}
+.recon-doc .tablewrap{margin:10px 0}
+.recon-panel .tablewrap{max-height:530px}
+.recon-panel .tablewrap th{position:sticky;top:0;background:#f9fafb;text-align:left;padding:9px;border-bottom:1px solid #d0d5dd;z-index:1;white-space:nowrap}
+.recon-panel .tablewrap td{white-space:normal;min-width:110px}
+.recon-panel .tablewrap td:nth-child(4){min-width:230px}
+.recon-panel #reconQuality ul{margin:0;padding-left:20px;overflow-wrap:anywhere}
+.recon-panel #reconStatus{margin-top:12px;overflow-wrap:anywhere}
+.recon-panel #reconResult>button{margin-top:16px}
+@media(max-width:750px){
+ .recon-columns{grid-template-columns:1fr}
+ .recon-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .recon-settings{display:block}
+ .recon-settings button{margin-top:14px;width:100%}
+}
