@@ -1,4 +1,4 @@
-<!doctype html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><title>Помогатор</title><link rel="stylesheet" href="style.css?v=20261103-journal-restore1"></head><body><div id="authgate" hidden></div><header><div><b>Помогатор</b><small>Помощник по первичным документам</small></div><button type="button" class="journal-shortcut" onclick="show('journal')">Журнал документов</button><div class="headright"><span id="seatbadge" class="badge">1 место</span><button class="userbtn" onclick="show('account')">Аккаунт</button></div></header><main><p id="guestNote" class="scope" hidden>Режим без входа: доступна обработка Excel и получение плана с MAIN. Облачные справочники и документы по организациям пока требуют учётную запись.</p><div class="context"><label>Организация<select id="org"></select></label><button class="addorg" onclick="openOrgForm()">+ Организация</button></div><div id="orgmodal" class="modal" hidden><div class="modalbox"><h3>Новая организация</h3><label>Название организации<input id="orgname" type="text" placeholder="Например: ООО Весна"></label><label>ИНН<input id="orginn" type="text" inputmode="numeric" placeholder="Можно заполнить позже"></label><div class="modalactions"><button onclick="closeOrgForm()">Отмена</button><button class="primary" onclick="saveOrgForm()">Сохранить</button></div><p id="orgerror"></p></div></div><section id="home">
+<!doctype html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><title>Помогатор</title><link rel="stylesheet" href="style.css?v=20261103-journal-restore1"><link rel="stylesheet" href="reconciliation.css?v=20261108-1"></head><body><div id="authgate" hidden></div><header><div><b>Помогатор</b><small>Помощник по первичным документам</small></div><button type="button" class="journal-shortcut" onclick="show('journal')">Журнал документов</button><div class="headright"><span id="seatbadge" class="badge">1 место</span><button class="userbtn" onclick="show('account')">Аккаунт</button></div></header><main><p id="guestNote" class="scope" hidden>Режим без входа: доступна обработка Excel и получение плана с MAIN. Облачные справочники и документы по организациям пока требуют учётную запись.</p><div class="context"><label>Организация<select id="org"></select></label><button class="addorg" onclick="openOrgForm()">+ Организация</button></div><div id="orgmodal" class="modal" hidden><div class="modalbox"><h3>Новая организация</h3><label>Название организации<input id="orgname" type="text" placeholder="Например: ООО Весна"></label><label>ИНН<input id="orginn" type="text" inputmode="numeric" placeholder="Можно заполнить позже"></label><div class="modalactions"><button onclick="closeOrgForm()">Отмена</button><button class="primary" onclick="saveOrgForm()">Сохранить</button></div><p id="orgerror"></p></div></div><section id="home">
 <h1>Помогатор</h1>
 <p class="lead">Выберите направление работы. Документы и настройки существующих разделов не изменяются.</p>
 <div class="home-tabs" role="tablist" aria-label="Направления Помогатора">
@@ -25,6 +25,7 @@
   <h2>Прочее</h2>
   <p class="muted">Остальные инструменты и настройки Помогатора.</p>
   <div class="grid">
+    <button onclick="show('reconcile')">🧮<b>Акты сверки</b><span>Excel, PDF и фото · поиск расхождений</span></button>
     <button onclick="show('upload')">📄<b>Загрузить документ</b><span>Фото или PDF накладной</span></button>
     <button onclick="location.href='unf-integration.html'">🔄<b>1С Колхоз · API</b><span>Подключение к УНФ и сводный выпуск</span></button>
     <button onclick="show('dirs')">📚<b>Справочники 1С</b><span>Номенклатура и поставщики</span></button>
@@ -33,6 +34,58 @@
     <button onclick="show('account')">👤<b>Аккаунт</b><span>Рабочее пространство и доступы</span></button>
   </div>
 </div>
+</section>
+<section id="reconcile" class="recon-panel" hidden>
+  <a onclick="show('home')">← Главная</a>
+  <h2>Акты сверки</h2>
+  <p class="scope">Сопоставление бухгалтерских операций: дата, номер документа, сумма, дубли и сальдо. Загружайте любое количество Excel, PDF и фотографий. Файлы обрабатываются в браузере и не сохраняются на сервере.</p>
+  <div class="recon-columns">
+    <div class="card">
+      <h3>1. Наши документы</h3>
+      <label class="drop">Добавить файлы из нашей 1С / акт сверки
+        <input type="file" id="reconFilesA" multiple accept=".xlsx,.xls,.csv,.pdf,.txt,image/*" onchange="reconFilesChanged('a')">
+      </label>
+      <div id="reconListA" class="muted">Файлы не выбраны</div>
+      <label>Если в Excel две колонки сторон, использовать
+        <select id="reconColumnA">
+          <option value="left">Левую сторону акта</option>
+          <option value="right">Правую сторону акта</option>
+        </select>
+      </label>
+    </div>
+    <div class="card">
+      <h3>2. Документы контрагента</h3>
+      <label class="drop">Добавить файлы от контрагента
+        <input type="file" id="reconFilesB" multiple accept=".xlsx,.xls,.csv,.pdf,.txt,image/*" onchange="reconFilesChanged('b')">
+      </label>
+      <div id="reconListB" class="muted">Файлы не выбраны</div>
+      <label>Если в Excel две колонки сторон, использовать
+        <select id="reconColumnB">
+          <option value="left">Левую сторону акта</option>
+          <option value="right">Правую сторону акта</option>
+        </select>
+      </label>
+    </div>
+  </div>
+  <div class="card">
+    <p class="muted">Если у вас один двусторонний акт сверки Excel (обе стороны в одной таблице), добавьте его только в первый блок: программа попробует сравнить левую и правую части. Новые файлы добавляются к уже выбранным, а не заменяют их.</p>
+    <div class="recon-settings">
+      <label>Допуск по сумме, ₽
+        <input id="reconTolerance" type="number" min="0" step=".01" value=".01" onchange="if(reconState.parsed.length)reconBuildResult()">
+      </label>
+      <button type="button" id="reconRunBtn" class="primary" onclick="reconRun()">Найти расхождения</button>
+    </div>
+    <p id="reconStatus" class="muted" role="status">Добавьте документы и нажмите «Найти расхождения».</p>
+  </div>
+  <div class="card" id="reconResult" aria-live="polite">
+    <p class="muted">После обработки здесь появятся отсутствующие документы, различия в суммах и датах.</p>
+  </div>
+  <div class="card" id="reconQuality" aria-live="polite"></div>
+  <div class="card" id="reconReviewCard">
+    <h3>Проверка распознанных операций</h3>
+    <p class="muted">Фото и сканы могут распознаваться неточно. Проверьте найденные строки; текст можно исправить и пересчитать сверку.</p>
+    <div id="reconPreview"></div>
+  </div>
 </section><section id="upload" hidden><a onclick="show('home')">← Главная</a><h2>Загрузить приходную накладную</h2><div class="scope">Документ будет привязан к выбранной сверху организации.</div><div class="card"><label class="drop">Выберите одно или несколько фото/PDF<input id="doc" type="file" accept="image/*,.pdf" multiple></label><p id="docname">Файлы ещё не выбраны</p><button id="docuploadbtn" class="primary" onclick="uploadDocuments()">Распознать накладную</button><p id="docstatus"></p></div><div id="recognition" hidden><div class="card"><h3>Результат распознавания</h3><div class="formgrid"><label>Поставщик<input id="rsupplier"></label><label>ИНН<input id="rinn"></label><label>КПП<input id="rkpp"></label><label>Номер документа<input id="rnumber"></label><label>Дата<input id="rdate" type="date"></label><label>Сумма<input id="rtotal" inputmode="decimal"></label><label>НДС<input id="rvat" inputmode="decimal"></label></div><h3>Товары</h3><div class="tablewrap"><table class="nomtable"><thead><tr><th>Наименование</th><th>Номенклатура 1С</th><th>Кол-во</th><th>Цена</th><th>Сумма</th><th>НДС</th></tr></thead><tbody id="rlines"></tbody></table></div><p class="muted">Поля можно исправить перед подтверждением. Неподобранную номенклатуру будем отмечать отдельно.</p></div></div></section><section id="orders" hidden><a onclick="show('home')">← Главная</a><h2>Заказы покупателей</h2><div class="scope">Загрузите исходный Excel. Помощник разделит заказы по точкам и подготовит XLSX для загрузки запасов в 1С.</div><div class="card"><label class="drop">Выбрать Excel с заказами<input id="ordersfile" type="file" accept=".xlsx,.xls"></label><label class="drop">Рецептуры 1С (Excel)<input id="recipesfile" type="file" accept=".xlsx,.xls" onchange="loadRecipesFile()"></label><p id="recipesstatus" class="muted">Справочник рецептур ещё не загружен.</p><button id="ordersbtn" class="primary" onclick="processOrders()">Разобрать заказы</button><p id="ordersstatus" class="muted"></p><div id="ordersresult"></div></div></section><section id="iiko" hidden><a onclick="show('home')">← Главная</a><h2>Производство → iiko</h2><div class="production-tabs" role="tablist" aria-label="Производственные документы">
   <button id="productionTabCooking" type="button" class="production-tab active" role="tab" aria-selected="true" aria-controls="productionPanelCooking" onclick="productionSwitchTab('cooking')">Акт приготовления</button>
   <button id="productionTabTransfers" type="button" class="production-tab" role="tab" aria-selected="false" aria-controls="productionPanelTransfers" tabindex="-1" onclick="productionSwitchTab('transfers')">Перемещения</button>
@@ -115,5 +168,5 @@
  </div>
  <div class="card"><h3>Загруженные документы</h3><div class="empty" id="journalDocumentsList">Документов пока нет.</div></div>
  <div class="card"><h3>Списания «Колхоз»</h3><div id="kolhozUnifiedJournal" class="muted" role="status">Загружаю списания…</div></div>
-</section><section id="settings" hidden><a onclick="show('home')">← Главная</a><h2>Настройки</h2><div class="card"><h3>Организации</h3><div id="orglist"></div><button class="primary" onclick="openOrgForm()">+ Добавить организацию</button></div><div class="card"><label>Профиль 1С<select><option>1С:УНФ 8 / Управление предприятием общепита</option></select></label><p><b>Первый документ:</b> Приходная накладная</p><p class="muted">Прямого подключения к 1С нет. Обмен выполняется файлами.</p></div></section><section id="account" hidden><a onclick="show('home')">← Главная</a><h2>Аккаунт и доступ</h2><div class="card"><p><b>Рабочее пространство:</b> <span id="workspaceName"></span></p><p><b>Тариф:</b> <span id="planName">1 пользователь</span></p><p><b>Занято мест:</b> <span id="seatUsage">1 из 1</span></p></div><div class="card"><h3>Пользователи</h3><div id="userslist"></div><button class="primary" onclick="inviteUser()">+ Пригласить сотрудника</button><p id="inviteMsg" class="muted"></p></div><div class="card"><h3>Количество мест</h3><label>Оплаченных пользователей<select id="seatcount" onchange="changeSeats()"><option value="1">1 пользователь</option><option value="2">2 пользователя</option><option value="3">3 пользователя</option><option value="5">5 пользователей</option><option value="10">10 пользователей</option></select></label><p class="muted">Пока это тестовая настройка без оплаты. В коммерческой версии изменение мест будет связано с подпиской.</p></div><button class="logout" onclick="logout()">Выйти</button></section></main><footer>Помогатор · независимый тестовый проект</footer><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script><script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script><script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script><script src="app.js?v=20261103-journal-restore2"></script><script src="journal-writeoffs.js?v=20261104-mobile-stall-fix1"></script><script src="order-specifications.js?v=20261013-unified-specs"></script><script src="transfer-invoices.js?v=20261008-simple-styled"></script><script src="production-iiko.js?v=20261105-etm-pastry-dedup"></script><script src="production-tabs.js?v=20261101-stale-main-download6"></script><script src="production-bridge.js?v=20261101-server-stream15"></script><script src="production-morning.js?v=20261103-pie8-unitfix2"></script><script src="production-iiko-export.js?v=20261104-edit-saved-mappings1"></script>
+</section><section id="settings" hidden><a onclick="show('home')">← Главная</a><h2>Настройки</h2><div class="card"><h3>Организации</h3><div id="orglist"></div><button class="primary" onclick="openOrgForm()">+ Добавить организацию</button></div><div class="card"><label>Профиль 1С<select><option>1С:УНФ 8 / Управление предприятием общепита</option></select></label><p><b>Первый документ:</b> Приходная накладная</p><p class="muted">Прямого подключения к 1С нет. Обмен выполняется файлами.</p></div></section><section id="account" hidden><a onclick="show('home')">← Главная</a><h2>Аккаунт и доступ</h2><div class="card"><p><b>Рабочее пространство:</b> <span id="workspaceName"></span></p><p><b>Тариф:</b> <span id="planName">1 пользователь</span></p><p><b>Занято мест:</b> <span id="seatUsage">1 из 1</span></p></div><div class="card"><h3>Пользователи</h3><div id="userslist"></div><button class="primary" onclick="inviteUser()">+ Пригласить сотрудника</button><p id="inviteMsg" class="muted"></p></div><div class="card"><h3>Количество мест</h3><label>Оплаченных пользователей<select id="seatcount" onchange="changeSeats()"><option value="1">1 пользователь</option><option value="2">2 пользователя</option><option value="3">3 пользователя</option><option value="5">5 пользователей</option><option value="10">10 пользователей</option></select></label><p class="muted">Пока это тестовая настройка без оплаты. В коммерческой версии изменение мест будет связано с подпиской.</p></div><button class="logout" onclick="logout()">Выйти</button></section></main><footer>Помогатор · независимый тестовый проект</footer><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script><script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script><script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script><script src="app.js?v=20261103-journal-restore2"></script><script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" defer></script><script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" defer></script><script src="reconciliation.js?v=20261108-1" defer></script><script src="journal-writeoffs.js?v=20261104-mobile-stall-fix1"></script><script src="order-specifications.js?v=20261013-unified-specs"></script><script src="transfer-invoices.js?v=20261008-simple-styled"></script><script src="production-iiko.js?v=20261105-etm-pastry-dedup"></script><script src="production-tabs.js?v=20261101-stale-main-download6"></script><script src="production-bridge.js?v=20261101-server-stream15"></script><script src="production-morning.js?v=20261103-pie8-unitfix2"></script><script src="production-iiko-export.js?v=20261104-edit-saved-mappings1"></script>
 <script src="production-iiko-live.js?v=20261101-shared-map-display4"></script><script src="production-transfers-live.js?v=20261102-autoconnect1"></script><script src="customer-invoices.js?v=20261103-unlocked"></script><script src="transfer-print.js?v=20261103-pie8-visible4"></script></body></html>
