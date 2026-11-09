@@ -513,7 +513,7 @@ function productionBuild(){
    // as the cooking act: one pie = eight portions. Convert exactly once
    // while building EACH route, before totals, preview and iiko upload.
    const isLargePie=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(entry.name)&&
-     !/пирож|мини[\\s-]*пирог|маленьк/iu.test(entry.name);
+     !/пирож|мини[\\s-]*пирог|маленьк|песочн/iu.test(entry.name);
    const conversionFactor=isLargePie?8:1;
    const finalAmount=amount*conversionFactor;
    const prior=items.get(key);
@@ -646,7 +646,7 @@ function productionBuild(){
   for(const doc of productionDocuments){
     for(const item of doc.items){
       const large=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(item.name)&&
-        !/пирож|мини[\\s-]*пирог|маленьк/iu.test(item.name);
+        !/пирож|мини[\\s-]*пирог|маленьк|песочн/iu.test(item.name);
       if(large&&item.conversionFactor!==8){
         item.sourceQuantity=item.quantity;
         item.quantity*=8;
