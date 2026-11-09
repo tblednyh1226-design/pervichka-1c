@@ -17,7 +17,7 @@ function transferPrintForms(){
    // Last-line safeguard: never print an unconverted whole large pie.
    // Already converted rows carry conversionFactor=8 and must not be doubled.
    const isLargePie=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(item.name)&&
-     !/пирож|мини[\\s-]*пирог|маленьк/iu.test(item.name);
+     !/пирож|мини[\\s-]*пирог|маленьк|песочн/iu.test(item.name);
    const quantity=isLargePie
      ? (Number.isFinite(Number(item.sourceQuantity))
          ? Number(item.sourceQuantity)*8
