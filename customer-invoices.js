@@ -94,7 +94,7 @@ function customerInvoicesPreview(){
    if(qty<=0)continue;
    const weight=String(row[2]??'').trim();
    const isLargePie=/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/iu.test(name)&&
-     !/пирож|мини[\s-]*пирог|маленьк/iu.test(name);
+     !/пирож|мини[\s-]*пирог|маленьк|песочн/iu.test(name);
    const originalQty=qty;
    if(isLargePie)qty*=8;
    const price=number(row[3]);
