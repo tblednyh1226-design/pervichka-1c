@@ -223,7 +223,7 @@ function morningLargePieInPieces(name,weight){
   // source unit is labelled "кус.". Convert raw quantities to 8 slices.
   const dish=morningNorm(name);
   if(!/(?:^|[^а-я])пирог(?:и|ов|а|ом)?(?=$|[^а-я])/u.test(dish))return false;
-  if(/пирож|мини[\s-]*пирог|маленьк/u.test(dish))return false;
+  if(/пирож|мини[\s-]*пирог|маленьк|песочн/u.test(dish))return false;
   return true;
 }
 function morningExtract(rows,header,col,from,to,warnings,convertLargePies=false){
