@@ -281,56 +281,136 @@ function reconDrawFiles(){
   }
 }
 function reconSameNum(a,b){return Boolean(a.number&&b.number&&a.number===b.number);}
+/* Одна операция может занимать несколько строк. Складываем только строки
+   ОДНОГО документа на одной стороне, не объединяя одинаковые дубли. */
+function reconMergeDocumentLines(items){
+  const groups=new Map();
+  items.forEach((entry,index)=>{
+    const key=entry.number && entry.date && entry.kind!=='other'
+      ? [entry.side,entry.source,entry.sheet,entry.date,entry.kind,entry.number].join('\u0001')
+      : 'single:'+index;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(entry);
+  });
+  const out=[];
+  for(const group of groups.values()){
+    if(group.length<2){out.push(...group);continue;}
+    const unique=new Set(group.map(x=>x.amount.toFixed(2)+'|'+x.desc));
+    if(unique.size!==group.length){out.push(...group);continue;}
+    const total=Math.round(group.reduce((sum,x)=>sum+x.amount,0)*100)/100;
+    out.push({...group[0],amount:total,groupCount:group.length});
+  }
+  return out;
+}
 function reconSimilarity(a,b){
-  const norm=s=>String(s||'').toLowerCase().replace(/ё/g,'е').replace(/\b(от|за|для|по|акт|документ|услуги|товары|товаров|поступление|реализация|номер)\b/g,' ').replace(/[^a-zа-я0-9]+/g,' ').split(' ').filter(x=>x.length>=3);
+  const norm=s=>String(s||'').toLowerCase().replace(/ё/g,'е')
+    .replace(/\b(от|за|для|по|акт|документ|услуги|товары|товаров|поступление|реализация|номер|счет|счёт|накладная|платежное|платёжное|поручение)\b/g,' ')
+    .replace(/[^a-zа-я0-9]+/g,' ').split(' ').filter(x=>x.length>=3);
   const x=new Set(norm(a.desc)),y=new Set(norm(b.desc));
   if(!x.size||!y.size)return 0;
   let hits=0;for(const k of x)if(y.has(k))hits++;
   return hits/Math.max(x.size,y.size);
 }
+function reconKindCompatible(a,b){
+  return a.kind===b.kind || a.kind==='other' || b.kind==='other';
+}
+/* Сумма и смысл операции — обязательные признаки. Дата и № лишь уточняют,
+   какую из нескольких одинаковых сумм сопоставлять. */
 function reconPairScore(a,b,tol){
-  const numbered=reconSameNum(a,b),gap=reconDayGap(a.date,b.date),diff=Math.abs(a.amount-b.amount),similarity=reconSimilarity(a,b);
-  if(a.number && b.number && !numbered)return -1;
-  if(numbered && gap>31 && a.date && b.date)return -1;
-  if(a.kind!=='other' && b.kind!=='other' && a.kind!==b.kind)return -1;
-  if(!numbered && gap>7)return -1;
-  if(!numbered && diff>tol && !(gap===0 && similarity>=0.5))return -1;
-  if(!numbered && diff<=tol && gap>3 && similarity<0.5)return -1;
-  let score=0;
-  if(numbered)score+=75;
-  if(diff<=tol)score+=42;else if(numbered)score+=Math.max(0,12-diff/100);
-  if(gap===0)score+=27;else if(gap<=3)score+=16;else if(gap<=7)score+=5;
-  score+=similarity*17;
-  if(a.kind===b.kind && a.kind!=='other')score+=7;
+  if(!reconKindCompatible(a,b))return -1;
+  if(Math.abs(a.amount-b.amount)>tol)return -1;
+  const sameNum=reconSameNum(a,b),gap=reconDayGap(a.date,b.date),similarity=reconSimilarity(a,b);
+  if(gap>90 && !sameNum && similarity<0.45)return -1;
+  let score=100;
+  if(a.kind===b.kind && a.kind!=='other')score+=35;
+  else if(a.kind!==b.kind)score-=18;
+  if(sameNum)score+=42;
+  score+=similarity*30;
+  if(gap===0)score+=20;
+  else if(gap<=3)score+=15;
+  else if(gap<=14)score+=9;
+  else if(gap<=31)score+=4;
   return score;
 }
 function reconCompare(a,b,tol){
-  const used=new Set(),report=[];
-  const indexedA=a.map((entry,idx)=>({...entry,_idx:idx})).sort((x,y)=>Number(Boolean(y.number))-Number(Boolean(x.number)));
-  for(const x of indexedA){
-    const candidates=[];
-    for(let j=0;j<b.length;j++){
-      if(used.has(j))continue;
-      const score=reconPairScore(x,b[j],tol);
-      if(score>=45)candidates.push({j,score});
+  const left=reconMergeDocumentLines(a),right=reconMergeDocumentLines(b);
+  const usedA=new Set(),usedB=new Set(),report=[],edges=[];
+  const optionsA=left.map(()=>[]),optionsB=right.map(()=>[]);
+  for(let i=0;i<left.length;i++){
+    for(let j=0;j<right.length;j++){
+      const score=reconPairScore(left[i],right[j],tol);
+      if(score<0)continue;
+      const edge={i,j,score};
+      edges.push(edge);optionsA[i].push(edge);optionsB[j].push(edge);
     }
-    candidates.sort((p,q)=>q.score-p.score);
-    if(!candidates.length){report.push({status:'Нет у контрагента',a:x,b:null,diff:x.amount,note:''});continue;}
-    if(candidates.length>1 && candidates[0].score-candidates[1].score<3 && !x.number){
-      report.push({status:'Требует проверки',a:x,b:null,diff:x.amount,note:'Несколько похожих операций у контрагента; автоматическое сопоставление не выполнено'});
-      continue;
-    }
-    const y=b[candidates[0].j];used.add(candidates[0].j);
-    const diff=Math.round((x.amount-y.amount)*100)/100;
-    const changedDate=x.date&&y.date&&x.date!==y.date;
-    const changedSum=Math.abs(diff)>tol;
-    const status=changedSum?'Разная сумма':changedDate?'Разные даты':'Совпадает';
-    let note='';
-    if(!x.number||!y.number)note='Проверьте номер: сопоставлено по дате / сумме / описанию';
-    report.push({status,a:x,b:y,diff,note});
   }
-  for(let j=0;j<b.length;j++)if(!used.has(j))report.push({status:'Нет у нас',a:null,b:b[j],diff:-b[j].amount,note:''});
-  return report.sort((x,y)=>String(x.a?.date||x.b?.date).localeCompare(String(y.a?.date||y.b?.date)));
+  /* Если на обеих сторонах есть несколько неразличимых операций —
+     не выбираем произвольную строку только из-за её позиции в файле. */
+  const ambiguousA=new Set(),ambiguousB=new Set();
+  for(let i=0;i<left.length;i++){
+    const options=optionsA[i].sort((x,y)=>y.score-x.score);
+    if(options.length>1 && options[0].score-options[1].score<7
+      && !reconSameNum(left[i],right[options[0].j]))ambiguousA.add(i);
+  }
+  for(let j=0;j<right.length;j++){
+    const options=optionsB[j].sort((x,y)=>y.score-x.score);
+    if(options.length>1 && options[0].score-options[1].score<7
+      && !reconSameNum(left[options[0].i],right[j]))ambiguousB.add(j);
+  }
+  edges.sort((x,y)=>y.score-x.score || x.i-y.i || x.j-y.j);
+  for(const {i,j} of edges){
+    if(usedA.has(i)||usedB.has(j)||ambiguousA.has(i)||ambiguousB.has(j))continue;
+    const x=left[i],y=right[j],sim=reconSimilarity(x,y),gap=reconDayGap(x.date,y.date);
+    const uncertain=(x.kind==='other'&&y.kind==='other'&&sim<0.2&&!reconSameNum(x,y))
+      ||(x.kind!==y.kind && sim<0.35&&!reconSameNum(x,y))
+      ||(gap>31 && sim<0.35&&!reconSameNum(x,y));
+    const notes=[];
+    if(x.groupCount||y.groupCount)notes.push('Сопоставлены суммы строк одного документа: '+(x.groupCount||1)+' / '+(y.groupCount||1));
+    if(x.date&&y.date&&x.date!==y.date)notes.push('Дата отличается: '+x.date+' / '+y.date);
+    if(x.number&&y.number&&x.number!==y.number)notes.push('Номера документов отличаются');
+    if(x.kind==='other'||y.kind==='other')notes.push('Проверьте вид операции');
+    if(uncertain)notes.push('Недостаточно признаков для уверенного подтверждения совпадения');
+    report.push({status:uncertain?'Требует проверки':'Совпадает',a:x,b:y,diff:0,note:notes.join('; ')});
+    usedA.add(i);usedB.add(j);
+  }
+  /* Разная сумма — только при уверенной идентификации той же операции.
+     Простое совпадение даты недостаточно. */
+  const mismatches=[];
+  for(let i=0;i<left.length;i++){
+    if(usedA.has(i)||ambiguousA.has(i))continue;
+    for(let j=0;j<right.length;j++){
+      if(usedB.has(j)||ambiguousB.has(j))continue;
+      const x=left[i],y=right[j],gap=reconDayGap(x.date,y.date),sim=reconSimilarity(x,y);
+      if(!reconKindCompatible(x,y)||Math.abs(x.amount-y.amount)<=tol)continue;
+      const byNumber=reconSameNum(x,y)&&gap<=45;
+      const byMeaning=x.kind===y.kind&&x.kind!=='other'&&sim>=0.65&&gap<=15
+        &&(!x.number||!y.number||x.number===y.number);
+      if(!byNumber&&!byMeaning)continue;
+      mismatches.push({i,j,score:(byNumber?120:60)+sim*25+Math.max(0,15-gap)});
+    }
+  }
+  mismatches.sort((x,y)=>y.score-x.score);
+  for(const {i,j,score} of mismatches){
+    if(usedA.has(i)||usedB.has(j))continue;
+    const rivals=mismatches.filter(e=>(e.i===i&&e.j!==j)||(e.j===j&&e.i!==i));
+    if(rivals.some(e=>!usedA.has(e.i)&&!usedB.has(e.j)&&e.score>=score-7))continue;
+    const x=left[i],y=right[j],diff=Math.round((x.amount-y.amount)*100)/100;
+    report.push({status:'Разная сумма',a:x,b:y,diff,note:'Вероятно одна операция, но суммы различаются. Проверьте вручную.'});
+    usedA.add(i);usedB.add(j);
+  }
+  for(let i=0;i<left.length;i++)if(!usedA.has(i)){
+    const ambiguous=ambiguousA.has(i)||optionsA[i].some(x=>ambiguousB.has(x.j));
+    report.push({status:ambiguous?'Требует проверки':'Нет у контрагента',
+      a:left[i],b:null,diff:left[i].amount,
+      note:ambiguous?'Несколько операций с той же суммой и видом: нельзя определить пару автоматически':''});
+  }
+  for(let j=0;j<right.length;j++)if(!usedB.has(j)){
+    const ambiguous=ambiguousB.has(j)||optionsB[j].some(x=>ambiguousA.has(x.i));
+    report.push({status:ambiguous?'Требует проверки':'Нет у нас',
+      a:null,b:right[j],diff:-right[j].amount,
+      note:ambiguous?'Нужна ручная проверка: несколько подходящих операций':''});
+  }
+  return report.sort((x,y)=>String(x.a?.date||x.b?.date||'').localeCompare(String(y.a?.date||y.b?.date||'')));
 }
 function reconDuplicates(items,side){
   const seen=new Map(),warnings=[];
