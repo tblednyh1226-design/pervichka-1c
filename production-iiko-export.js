@@ -1,6 +1,6 @@
 /* Preparing iikoServer productionDocument XML. No network calls or live document creation. */
 const iikoDraftState={catalog:new Map(),catalogList:[],catalogCount:0,documents:[],issues:[],
-  mismatches:[],ready:false,signature:'',mappings:new Map(),mappingRows:[],
+  mismatches:[],ready:false,readyByDoc:{BK:false,PK:false},signature:'',mappings:new Map(),mappingRows:[],
   mappingDevice:'',mappingLoading:false,mappingLoaded:false,mappingError:''};
 function iikoDraftNorm(s){return String(s??'').toLowerCase().replace(/ё/g,'е').replace(/["«»]/g,'').replace(/\s+/g,' ').trim()}
 // Composition in parentheses is not part of the product name. Preserve the full
@@ -13,7 +13,7 @@ function iikoDraftHtml(s){return iikoDraftEsc(s).replace(/&apos;/g,'&#39;')}
 function iikoDraftOnlyPositive(items){return (items||[]).filter(x=>Number.isFinite(Number(x.quantity))&&Number(x.quantity)>0)}
 function iikoDraftHashText(s){let h=2166136261;for(let k=0;k<s.length;k++){h^=s.charCodeAt(k);h=Math.imul(h,16777619)}return (h>>>0).toString(16).padStart(8,'0')}
 function iikoDraftInvalidate(reason){
-  iikoDraftState.ready=false;iikoDraftState.documents=[];iikoDraftState.issues=[];iikoDraftState.mismatches=[];
+  iikoDraftState.ready=false;iikoDraftState.readyByDoc={BK:false,PK:false};iikoDraftState.documents=[];iikoDraftState.issues=[];iikoDraftState.mismatches=[];
   const btn=document.getElementById('iikoDraftDownload');
   if(btn)btn.disabled=true;
   if(typeof iikoLiveRefreshButtons==='function')iikoLiveRefreshButtons();
@@ -297,35 +297,43 @@ function iikoDraftStore(which,end){
 }
 // The single resolver used by cooking acts and all transfer documents.
 // Only currently present, unambiguous iiko product IDs may be used.
+// Index the catalogue only on change; avoids a full iiko scan per Excel row.
+let iikoDraftIndexSource=null,iikoDraftIndexCache=null;
+function iikoDraftCatalogIndex(){
+ const catalog=iikoDraftState.catalogList||[];
+ if(iikoDraftIndexSource===catalog&&iikoDraftIndexCache)return iikoDraftIndexCache;
+ const index={byId:new Map(),byArticle:new Map(),exact:new Map(),prefix:new Map(),any:new Set()};
+ const add=(map,key,p)=>{if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(p)};
+ for(const p of catalog){
+   add(index.byId,String(p.id||''),p);add(index.byArticle,String(p.article||''),p);
+   const exact=iikoDraftNorm(p.name),prefix=iikoDraftSourceKey(p.name);
+   index.any.add(exact);index.any.add(prefix);
+   if(!p.type||['DISH','PREPARED'].includes(String(p.type).toUpperCase())){
+     add(index.exact,exact,p);add(index.prefix,prefix,p);
+   }
+ }
+ iikoDraftIndexSource=catalog;iikoDraftIndexCache=index;return index;
+}
 function iikoDraftResolveProduct(item){
-  const key=iikoDraftSourceKey(item?.name);
-  if(!key)return {error:'Пустое название блюда в плане'};
-  if(!iikoDraftState.mappingLoaded)return {error:'Общий справочник соответствий ещё загружается'};
-  const catalog=iikoDraftState.catalogList||[];
-  const isFood=p=>!p.type||['DISH','PREPARED'].includes(String(p.type).toUpperCase());
-  const usable=catalog.filter(isFood);
-  const saved=iikoDraftState.mappings.get(key);
-  if(saved){
-    // A non-food type is permitted only when the user previously confirmed it.
-    // IDs can change after iiko catalogue recreation. The saved article is
-    // a safe fallback only when it uniquely identifies the replacement item.
-    const byId=saved.target_id?catalog.filter(p=>String(p.id)===String(saved.target_id)):[];
-    const byArticle=!byId.length&&saved.target_article?
-      catalog.filter(p=>String(p.article||'')===String(saved.target_article)):[];
-    const unique=new Map((byId.length?byId:byArticle).map(p=>[String(p.id||p.article),p]));
-    if(unique.size===1)return {product:[...unique.values()][0],source:'saved'};
-    return {error:'Сохранённое соответствие отсутствует или неоднозначно в текущем справочнике iiko'};
-  }
-  // Prefer one exact normalized name. A matching title with composition in
-  // parentheses is a fallback only when it identifies a single product.
-  const exact=usable.filter(p=>iikoDraftNorm(p.name)===key);
-  const matches=exact.length?exact:usable.filter(p=>iikoDraftSourceKey(p.name)===key);
-  const unique=new Map(matches.map(p=>[String(p.id||p.article),p]));
-  if(unique.size===1)return {product:[...unique.values()][0],source:'exact'};
-  if(unique.size>1)return {error:'В iiko несколько подходящих блюд — выберите нужное вручную'};
-  const any=catalog.some(p=>iikoDraftNorm(p.name)===key||iikoDraftSourceKey(p.name)===key);
-  return {error:any?'Название найдено, но тип позиции требует ручного подтверждения':
-    'Название блюда не найдено в iiko'};
+ const key=iikoDraftSourceKey(item?.name);
+ if(!key)return {error:'Пустое название блюда в плане'};
+ if(!iikoDraftState.mappingLoaded)return {error:'Общий справочник соответствий ещё загружается'};
+ const index=iikoDraftCatalogIndex();
+ const uniq=arr=>new Map((arr||[]).map(p=>[String(p.id||p.article),p]));
+ const saved=iikoDraftState.mappings.get(key);
+ if(saved){
+   const byId=saved.target_id?(index.byId.get(String(saved.target_id))||[]):[];
+   const byArticle=!byId.length&&saved.target_article?(index.byArticle.get(String(saved.target_article))||[]):[];
+   const list=uniq(byId.length?byId:byArticle);
+   if(list.size===1)return {product:[...list.values()][0],source:'saved'};
+   return {error:'Сохранённое соответствие отсутствует или неоднозначно в текущем справочнике iiko'};
+ }
+ const exact=index.exact.get(key)||[];
+ const list=uniq(exact.length?exact:(index.prefix.get(key)||[]));
+ if(list.size===1)return {product:[...list.values()][0],source:'exact'};
+ if(list.size>1)return {error:'В iiko несколько подходящих блюд — выберите нужное вручную'};
+ return {error:index.any.has(key)?
+   'Название найдено, но тип позиции требует ручного подтверждения':'Название блюда не найдено в iiko'};
 }
 function iikoDraftItem(item){
  const match=iikoDraftResolveProduct(item);
@@ -345,7 +353,7 @@ function iikoDraftBuildData(){
   if(!original||original.needsColumn||!Array.isArray(original.documents)||original.documents.length!==2)throw Error('Сначала сформируй два акта за выбранную дату.');
   const date=String(original.date?.iso||'');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw Error('Некорректная дата приготовления');
-  const issues=[],mismatches=[],documents=[],merged=[];
+  const issues=[],mismatches=[],documents=[],merged=[],readyByDoc={BK:false,PK:false};
   if(!iikoDraftState.catalogCount)issues.push('Загрузи актуальный справочник номенклатуры iiko с наименованиями и ID/артикулом.');
   for(const [idx,doc] of original.documents.entries()){
     const key=idx===0?'BK':'PK';
@@ -377,6 +385,9 @@ function iikoDraftBuildData(){
       lines.push(match);
     }
     if(!lines.length)issues.push(doc.warehouse+': нет подтверждённых строк.');
+    // Independent kitchens: an unresolved ПК row must not disable БК.
+    readyByDoc[key]=Boolean(from&&to&&lines.length&&iikoDraftState.catalogCount&&
+      iikoDraftState.mappingLoaded&&!mismatches.some(x=>x.kitchen===doc.warehouse));
     // Do not reserve, calculate or transmit a document number.
     // iikoServer is expected to assign a number when creating a NEW document.
     // This needs a live environment check before enabling actual writes.
@@ -384,7 +395,7 @@ function iikoDraftBuildData(){
       numbering:'iiko-auto',warehouse:doc.warehouse,storeFrom:from,storeTo:to,items:lines});
   }
   const signature=iikoDraftHashText(JSON.stringify(documents));
-  return {date,sourceSheet:original.sheet,sourceColumn:original.selected?.label||'',documents,issues,mismatches,merged,signature};
+  return {date,sourceSheet:original.sheet,sourceColumn:original.selected?.label||'',documents,issues,mismatches,merged,readyByDoc,signature};
 }
 // Runs automatically whenever the source plan, day, column, iiko catalogue or stores change.
 function iikoDraftAutoCheck(){
@@ -413,6 +424,7 @@ function iikoDraftCheck(){
     iikoDraftState.issues=data.issues;
     iikoDraftState.mismatches=data.mismatches;
     iikoDraftState.ready=data.issues.length===0&&data.mismatches.length===0;
+    iikoDraftState.readyByDoc=data.readyByDoc;
     iikoDraftState.signature=data.signature;
     const sum=d=>d.items.reduce((n,x)=>n+x.amount,0);
     const heading=data.documents.map(d=>'<div><b>Акт '+iikoDraftHtml(d.warehouseCode)+'</b> · '+iikoDraftHtml(d.warehouse)+' · '+d.items.length+' совпавших поз. · '+sum(d)+' шт. · NEW (без проведения)</div>').join('');
