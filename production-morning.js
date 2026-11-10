@@ -49,7 +49,10 @@ function morningBuildSelectedDate() {
   morningState.result=null;
   if(typeof iikoDraftInvalidate==='function')iikoDraftInvalidate('Дата изменена. Повтори проверку пакета iiko.');
   if(area)area.innerHTML='';
-  if(exportBtn)exportBtn.hidden=true;
+  for(const id of ['morningExportBtn','morningExportBKBtn','morningExportPKBtn']){
+    const button=document.getElementById(id);
+    if(button)button.hidden=true;
+  }
   if(picker)picker.hidden=true;
   try{
     const date=morningSelectedDate();
@@ -315,6 +318,10 @@ function morningPrintResult(){
   if(!area||!status||!r)return;
   if(picker)picker.hidden=true; // No manual override: only the iiko column.
   if(exportBtn)exportBtn.hidden=Boolean(r.needsColumn);
+  for(const [code,index] of [['BK',0],['PK',1]]){
+    const button=document.getElementById('morningExport'+code+'Btn');
+    if(button)button.hidden=Boolean(r.needsColumn||!r.documents?.[index]);
+  }
   if(r.needsColumn)return;
   const cards=r.documents.map(d=>{
     const sum=d.items.reduce((s,x)=>s+x.quantity,0);
@@ -348,8 +355,9 @@ function morningPrepareFromBytes(bytes,name){
   morningPrepareBook(book,name,bytes);
   return book;
 }
-function morningExportPreview(){
+function morningExportPreview(which='ALL'){
   const r=morningState.result;
+  if(!['ALL','BK','PK'].includes(which))throw Error('Неизвестный акт приготовления');
   if(!r||r.needsColumn||!Array.isArray(r.documents)||r.documents.length!==2){
     const status=document.getElementById('morningStatus');
     if(status)status.textContent='Сначала сформируйте два акта приготовления за выбранную дату.';
@@ -361,10 +369,11 @@ function morningExportPreview(){
     return;
   }
   const book=XLSX.utils.book_new();
+  const selected=which==='ALL'?r.documents.map((doc,index)=>({doc,index})):
+    [{doc:r.documents[which==='BK'?0:1],index:which==='BK'?0:1}];
   const palette={header:'155EEF',light:'EAF2FF',dark:'101828',muted:'667085',border:'D0D5DD'};
-  for(let i=0;i<r.documents.length;i++){
-    const doc=r.documents[i];
-    const name=i===0?'Бухара кухня':'Правда кухня';
+  for(const {doc,index} of selected){
+    const name=index===0?'Бухара кухня':'Правда кухня';
     const items=doc.items||[];
     const total=items.reduce((sum,item)=>sum+Number(item.quantity||0),0);
     const rows=[
@@ -411,6 +420,8 @@ function morningExportPreview(){
     notes['!rows']=rows.map((_,i)=>({hpt:i>=4?50:24}));
     XLSX.utils.book_append_sheet(book,notes,'Замечания');
   }
-  const filename='Акты приготовления '+r.date.iso+' БК и ПК.xlsx';
+  const filename=which==='ALL'?
+    'Акты приготовления '+r.date.iso+' БК и ПК.xlsx':
+    'Акт приготовления '+r.date.iso+' '+which+'.xlsx';
   XLSX.writeFile(book,filename,{bookType:'xlsx',compression:true});
 }
