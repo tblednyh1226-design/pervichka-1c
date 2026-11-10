@@ -125,13 +125,13 @@ function iikoLiveReceiptKey(doc,signature){
   return [doc.warehouseCode,doc.dateIncoming,signature].join('|');
 }
 function iikoLiveRefreshButtons(){
-  const prepared=iikoDraftState.ready&&iikoDraftState.documents.length===2&&iikoLiveState.connected;
+  const prepared=iikoDraftState.documents.length===2&&iikoLiveState.connected;
   for(const which of ['BK','PK']){
     const btn=document.getElementById('iikoLiveSend'+which);
     if(!btn)continue;
     const doc=iikoDraftState.documents.find(x=>x.warehouseCode===which);
     const key=doc?iikoLiveReceiptKey(doc,iikoDraftState.signature):'';
-    btn.disabled=iikoLiveState.busy||!prepared||!doc||iikoLiveState.submitted.has(key);
+    btn.disabled=iikoLiveState.busy||!prepared||!doc||!iikoDraftState.readyByDoc?.[which]||iikoLiveState.submitted.has(key);
   }
 }
 function iikoLiveRenderReceipts(){
@@ -147,8 +147,8 @@ async function iikoLiveSend(which){
   if(!iikoLiveState.connected){iikoLiveStatus('Сначала загрузите справочник и склады прямо из iiko.',true);return}
   // Always rebuild using current plan, mappings, quantities and warehouse selections.
   const result=iikoDraftCheck();
-  if(!iikoDraftState.ready||result?.issues?.length||result?.mismatches?.length){
-    iikoLiveStatus('Есть ошибки или неподтверждённая номенклатура. Отправка не выполнена.',true);
+  if(!iikoDraftState.readyByDoc?.[which]){
+    iikoLiveStatus('В акте '+which+' есть ошибки или неподтверждённая номенклатура. Отправка не выполнена.',true);
     return;
   }
   const doc=iikoDraftState.documents.find(x=>x.warehouseCode===which);
