@@ -113,19 +113,24 @@
     <label>Склад списания сырья iiko<select id="iikoDraftBKFrom" onchange="iikoDraftAutoCheck()"><option value="">Сначала подключитесь к iiko</option></select></label>
     <label>Склад выпуска iiko<select id="iikoDraftBKTo" onchange="iikoDraftAutoCheck()"><option value="">Сначала подключитесь к iiko</option></select></label>
   </div>
+  <div class="modalactions" style="justify-content:flex-start;flex-wrap:wrap">
+    <button id="iikoLiveSendBK" class="primary" disabled onclick="iikoLiveSend('BK')">Отправить только акт БК в iiko (NEW)</button>
+  </div>
   <h4>Правда кухня (акт ПК)</h4>
   <div class="formgrid">
     <label>Склад списания сырья iiko<select id="iikoDraftPKFrom" onchange="iikoDraftAutoCheck()"><option value="">Сначала подключитесь к iiko</option></select></label>
     <label>Склад выпуска iiko<select id="iikoDraftPKTo" onchange="iikoDraftAutoCheck()"><option value="">Сначала подключитесь к iiko</option></select></label>
   </div>
   <div class="modalactions" style="justify-content:flex-start;flex-wrap:wrap">
+    <button id="iikoLiveSendPK" class="primary" disabled onclick="iikoLiveSend('PK')">Отправить только акт ПК в iiko (NEW)</button>
+  </div>
+  <p class="muted">Каждый акт выгружается отдельно. Ошибки сопоставления в другом акте не блокируют готовую кухню. Ниже — только скачивание тестовых файлов без отправки.</p>
+  <div class="modalactions" style="justify-content:flex-start;flex-wrap:wrap">
     <button id="iikoDraftMismatchDownload" disabled onclick="iikoDraftDownloadMismatches()">Скачать список несовпадений Excel</button>
     <button onclick="iikoDraftReloadPlan()">Загрузить обновлённый план Excel</button>
-    <button id="iikoDraftDownloadBK" disabled onclick="iikoDraftDownload('BK')">Скачать пакет БК (iiko)</button>
-    <button id="iikoDraftDownloadPK" disabled onclick="iikoDraftDownload('PK')">Скачать пакет ПК (iiko)</button>
-    <button id="iikoDraftDownload" disabled onclick="iikoDraftDownload()">Скачать оба пакета iiko</button>
-    <button id="iikoLiveSendBK" class="primary" disabled onclick="iikoLiveSend('BK')">Отправить БК в iiko (NEW)</button>
-    <button id="iikoLiveSendPK" class="primary" disabled onclick="iikoLiveSend('PK')">Отправить ПК в iiko (NEW)</button>
+    <button id="iikoDraftDownloadBK" disabled onclick="iikoDraftDownload('BK')">Тестовый пакет БК</button>
+    <button id="iikoDraftDownloadPK" disabled onclick="iikoDraftDownload('PK')">Тестовый пакет ПК</button>
+    <button id="iikoDraftDownload" disabled onclick="iikoDraftDownload()">Тестовый пакет БК + ПК</button>
   </div>
   <p class="muted" id="iikoDraftStatus">Сверка запускается автоматически после загрузки плана и справочника iiko. Неизвестные блюда предложит сопоставить вручную и запомнит подтверждённый выбор.</p>
   <div id="iikoDraftResult"></div>
