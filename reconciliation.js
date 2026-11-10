@@ -287,7 +287,7 @@ function reconMergeDocumentLines(items){
   const groups=new Map();
   items.forEach((entry,index)=>{
     const key=entry.number && entry.date && entry.kind!=='other'
-      ? [entry.side,entry.source,entry.sheet,entry.date,entry.kind,entry.number].join('\u0001')
+      ? [entry.side,entry.source,entry.sheet,entry.date,entry.kind,entry.number,entry.direction].join('\u0001')
       : 'single:'+index;
     if(!groups.has(key))groups.set(key,[]);
     groups.get(key).push(entry);
@@ -320,7 +320,6 @@ function reconPairScore(a,b,tol){
   if(!reconKindCompatible(a,b))return -1;
   if(Math.abs(a.amount-b.amount)>tol)return -1;
   const sameNum=reconSameNum(a,b),gap=reconDayGap(a.date,b.date),similarity=reconSimilarity(a,b);
-  if(gap>90 && !sameNum && similarity<0.45)return -1;
   let score=100;
   if(a.kind===b.kind && a.kind!=='other')score+=35;
   else if(a.kind!==b.kind)score-=18;
@@ -363,7 +362,7 @@ function reconCompare(a,b,tol){
     const x=left[i],y=right[j],sim=reconSimilarity(x,y),gap=reconDayGap(x.date,y.date);
     const uncertain=(x.kind==='other'&&y.kind==='other'&&sim<0.2&&!reconSameNum(x,y))
       ||(x.kind!==y.kind && sim<0.35&&!reconSameNum(x,y))
-      ||(gap>31 && sim<0.35&&!reconSameNum(x,y));
+      ||(x.date && y.date && gap>31 && sim<0.35&&!reconSameNum(x,y));
     const notes=[];
     if(x.groupCount||y.groupCount)notes.push('Сопоставлены суммы строк одного документа: '+(x.groupCount||1)+' / '+(y.groupCount||1));
     if(x.date&&y.date&&x.date!==y.date)notes.push('Дата отличается: '+x.date+' / '+y.date);
