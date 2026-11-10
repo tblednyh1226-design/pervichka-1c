@@ -345,31 +345,35 @@ function iikoDraftBuildData(){
   if(!original||original.needsColumn||!Array.isArray(original.documents)||original.documents.length!==2)throw Error('Сначала сформируй два акта за выбранную дату.');
   const date=String(original.date?.iso||'');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw Error('Некорректная дата приготовления');
-  const issues=[],mismatches=[],documents=[];
+  const issues=[],mismatches=[],documents=[],merged=[];
   if(!iikoDraftState.catalogCount)issues.push('Загрузи актуальный справочник номенклатуры iiko с наименованиями и ID/артикулом.');
   for(const [idx,doc] of original.documents.entries()){
     const key=idx===0?'BK':'PK';
     const from=iikoDraftStore(key,'from'),to=iikoDraftStore(key,'to');
     if(!from||!to)issues.push((key==='BK'?'Бухара кухня':'Правда кухня')+': укажи склад списания сырья и склад выпуска iiko.');
-    const lines=[],names=new Map(),resolvedSizes=new Map();
+    const lines=[],grouped=new Map();
     for(const item of iikoDraftOnlyPositive(doc.items)){
       const match=iikoDraftItem(item);
       if(match.error){mismatches.push(iikoDraftMismatch(doc,item,match.error,true));continue}
-      const productRef=match.product||match.productArticle;
+      const productRef=String(match.product||match.productArticle||'').trim();
+      if(!productRef){mismatches.push(iikoDraftMismatch(doc,item,'У товара iiko нет ID или артикула',true));continue}
       const size=iikoDraftNorm(item.weight);
-      const uniqueness=productRef+'/'+size;
-      if(names.has(uniqueness)){
-        const reason='Две строки используют один товар iiko с одинаковым весом/объёмом';
-        mismatches.push(iikoDraftMismatch(doc,names.get(uniqueness),reason));
-        mismatches.push(iikoDraftMismatch(doc,item,reason));
+      const previous=grouped.get(productRef);
+      if(previous){
+        if(previous.size!==size){
+          const reason='Один товар iiko указан с разным весом/объёмом — проверь сопоставление';
+          mismatches.push(iikoDraftMismatch(doc,previous.item,reason));
+          mismatches.push(iikoDraftMismatch(doc,item,reason));
+          continue;
+        }
+        // Different flavours can intentionally resolve to one iiko SKU. Add their
+        // quantities within this cooking act instead of blocking the export.
+        previous.line.amount=Number((previous.line.amount+match.amount).toFixed(6));
+        merged.push({warehouse:doc.warehouse,product:match.iikoName,
+          sourceRow:Number(item.sourceRow)||0,amount:match.amount});
+        continue;
       }
-      if(resolvedSizes.has(productRef)&&resolvedSizes.get(productRef).size!==size){
-        const previous=resolvedSizes.get(productRef);
-        const reason='Разные веса/объёмы направляются в один товар iiko — исправь названия в плане';
-        mismatches.push(iikoDraftMismatch(doc,previous.item,reason));
-        mismatches.push(iikoDraftMismatch(doc,item,reason));
-      }
-      names.set(uniqueness,item);resolvedSizes.set(productRef,{size,item});
+      grouped.set(productRef,{size,item,line:match});
       lines.push(match);
     }
     if(!lines.length)issues.push(doc.warehouse+': нет подтверждённых строк.');
@@ -380,7 +384,7 @@ function iikoDraftBuildData(){
       numbering:'iiko-auto',warehouse:doc.warehouse,storeFrom:from,storeTo:to,items:lines});
   }
   const signature=iikoDraftHashText(JSON.stringify(documents));
-  return {date,sourceSheet:original.sheet,sourceColumn:original.selected?.label||'',documents,issues,mismatches,signature};
+  return {date,sourceSheet:original.sheet,sourceColumn:original.selected?.label||'',documents,issues,mismatches,merged,signature};
 }
 // Runs automatically whenever the source plan, day, column, iiko catalogue or stores change.
 function iikoDraftAutoCheck(){
@@ -433,9 +437,10 @@ function iikoDraftCheck(){
       '<p>Сначала сравнивается название до первой скобки (состав игнорируется). Для незнакомых блюд выберите правильную позицию iiko и нажмите «Подтвердить и запомнить». Общие соответствия доступны другим браузерам, подключённым к MAIN.</p>'+
       '<div class="iiko-mapping-list">'+rowHTML+'</div>':
       '<p>Все блюда сопоставлены с текущим справочником iiko (название до скобок или подтверждённое соответствие).</p>';
+    const mergedHTML=data.merged.length?'<p class="muted">Объединены повторные строки в одном акте по товару iiko и одинаковому весу/объёму: '+data.merged.length+'. Количества суммированы, исходный Excel не менялся.</p>':'';
     const otherHTML=data.issues.length?'<p style="color:#b42318"><b>Другие замечания:</b></p><ul>'+data.issues.map(x=>'<li>'+iikoDraftHtml(x)+'</li>').join('')+'</ul>':'';
     const result=document.getElementById('iikoDraftResult');
-    if(result)result.innerHTML=heading+mismatchHTML+otherHTML;
+    if(result)result.innerHTML=heading+mergedHTML+mismatchHTML+otherHTML;
     for(let i=0;i<data.mismatches.length;i++){
       if(data.mismatches[i].canMap)iikoDraftFilterChoices(i);
     }
@@ -443,7 +448,7 @@ function iikoDraftCheck(){
     document.getElementById('iikoDraftStatus').textContent=missing?
       'Требуется выбрать соответствия iiko: '+missing+' строк. Используй поиск, затем «Подтвердить и запомнить».':
       data.issues.length?'Есть замечания: '+data.issues.length+'. Пакет не готов.':
-      'Названия совпали. Два акта готовы к скачиванию в тестовом пакете (без отправки в iiko).';
+      'Сопоставление готово. '+(data.merged.length?'Суммированы '+data.merged.length+' повторные строки. ':'')+'Два акта готовы к отправке в iiko (NEW, без проведения).';
     const btn=document.getElementById('iikoDraftDownload');
     if(btn)btn.disabled=!iikoDraftState.ready;
     const mismatchBtn=document.getElementById('iikoDraftMismatchDownload');
