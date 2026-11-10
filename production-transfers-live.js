@@ -55,6 +55,35 @@ function transferDate(){
 function transferAllItems(doc){
  return (doc?.items||[]).filter(x=>Number(x.quantity)>0);
 }
+// Sum plan flavours mapped to the same iiko SKU without losing the source rows.
+// A weight/volume mismatch is not automatically combined.
+function transferUploadLines(doc,di){
+ const lines=[],grouped=new Map(),errors=[];let merged=0;
+ for(const [index,item] of transferAllItems(doc).entries()){
+   const product=transferFindProduct(item,di,index);
+   if(!product?.id){errors.push('Не сопоставлено: '+item.name);continue}
+   const amount=Number(item.quantity),weight=transferNorm(item.weight);
+   if(!Number.isFinite(amount)||amount<=0){errors.push('Некорректное количество: '+item.name);continue}
+   const previous=grouped.get(product.id);
+   if(previous){
+     if(previous.weight!==weight){
+       errors.push('Разный вес/объём одного товара iiko: '+previous.sourceName+' и '+item.name);
+       continue;
+     }
+     previous.line.amount=Number((previous.line.amount+amount).toFixed(6));
+     merged++;
+   }else{
+     const line={productId:product.id,amount};
+     grouped.set(product.id,{weight,sourceName:item.name,line});
+     lines.push(line);
+   }
+ }
+ if(!lines.length)errors.push('Нет сопоставленных товаров для отправки');
+ if(lines.length>250)errors.push('В перемещении больше 250 позиций');
+ for(const line of lines)if(!Number.isFinite(line.amount)||line.amount<=0||line.amount>50000)
+   errors.push('Количество товара превышает 50000: '+line.productId);
+ return {items:lines,merged,errors};
+}
 function transferFindProduct(item,di,li){
  if(typeof iikoDraftResolveProduct!=='function')return null;
  const result=iikoDraftResolveProduct(item);
@@ -333,7 +362,7 @@ function transferRender(){
   const from=transferStore(i,'from'),to=transferStore(i,'to');
   const sending=transferLive.sending.has(lock);
   const disabled=!transferLive.connected||isLocked||transferLive.busy||sending||!from||!to||
-    transferAllItems(doc).some((item,j)=>!transferFindProduct(item,i,j));
+    from===to||Boolean(transferUploadLines(doc,i).errors.length);
   return '<article class="transfer-document" data-index="'+i+'">'+
    '<div class="transfer-summary-row">'+
     '<div><span class="transfer-label">Отправитель</span><strong>'+transferEscape(doc.source)+'</strong></div>'+
@@ -354,6 +383,7 @@ function transferRender(){
       transferDetailItems(doc,i)+
       '<p class="muted">Сумма появится после подключения достоверной себестоимости. Ноль не подставляется.</p>'+
    '</details>'+
+   (transferUploadLines(doc,i).merged?'<p class="transfer-receipt">При выгрузке объединены строки одного товара iiko: '+transferUploadLines(doc,i).merged+'. Количество суммировано.</p>':'')+
    (disabled?'<p class="transfer-receipt">Причина блокировки: '+transferEscape(transferDisabledReason(doc,i,lock))+'</p>':'')+
    (transferLive.receipts.has(lock)?
      '<p class="transfer-receipt">'+
@@ -378,6 +408,8 @@ function transferButtonLabel(key){
  if(transferLive.sending.has(key))return 'Отправляется…';
  const stored=String(localStorage.getItem(key)||'');
  if(stored.startsWith('confirmed:')||transferLive.receipts.get(key)?.ok)return 'Отправлено';
+ if(stored==='unknown')return 'Результат не подтверждён';
+ if(stored==='rejected')return 'Ошибка отправки';
  // Dispatch has started; don't rely on iiko status checks or unlock later.
  if(stored||transferLive.locks.has(key))return 'Отправка запущена';
  return 'Отправить в iiko';
@@ -391,8 +423,8 @@ function transferDisabledReason(doc,i,key){
  if(!from)return 'Не выбран склад-отправитель iiko';
  if(!to)return 'Не выбран склад-получатель iiko (проверьте Рэдмонд)';
  if(from===to)return 'Склады отправителя и получателя совпадают';
- const missing=transferAllItems(doc).filter((x,j)=>!transferFindProduct(x,i,j));
- if(missing.length)return 'Не сопоставлены блюда: '+missing.slice(0,5).map(x=>x.name).join(', ');
+ const errors=transferUploadLines(doc,i).errors;
+ if(errors.length)return errors.slice(0,3).join('; ');
  return '';
 }
 function transferRefreshSendButtons(){
@@ -403,7 +435,7 @@ function transferRefreshSendButtons(){
   const key=transferLockKey(doc,i);
   const ready=transferLive.connected&&transferStore(i,'from')&&transferStore(i,'to')&&
    transferStore(i,'from')!==transferStore(i,'to')&&
-   transferAllItems(doc).every((x,j)=>transferFindProduct(x,i,j));
+   !transferUploadLines(doc,i).errors.length;
   const locked=transferLive.locks.has(key)||Boolean(localStorage.getItem(key));
   const sending=transferLive.sending.has(key);
   btn.disabled=transferLive.busy||!ready||locked||sending;
@@ -463,8 +495,11 @@ async function transferPost(doc){
    headers:{'Content-Type':'application/json','x-device-id':pair.deviceId,'x-browser-token':pair.token},
    body:JSON.stringify({action:'upload_transfer',document:doc}),signal:ac.signal});
   const result=await response.json().catch(()=>({ok:false,error:'Непонятный ответ сервера iiko'}));
-  if(!response.ok||!result.ok||!result.accepted)
-     throw Error(result.error||'iiko не подтвердила перемещение');
+  if(!response.ok||!result.ok||!result.accepted){
+    const error=new Error(result.error||'iiko не подтвердила перемещение');
+    error.transferState=result.state||'unknown';
+    throw error;
+  }
   return result;
  }catch(e){
   if(e?.name==='AbortError')throw Error('Истекло время ожидания подтверждения. Отправка уже запускалась');
@@ -481,20 +516,16 @@ async function transferSend(index){
  }
  const from=transferStore(index,'from'),to=transferStore(index,'to');
  if(!from||!to||from===to){transferStatus('Выберите два разных склада из iiko.',true);return}
- const list=transferAllItems(doc).map((item,j)=>{
-  const p=transferFindProduct(item,index,j);
-  return p?{productId:p.id,amount:Number(item.quantity)}:null;
- });
- if(list.some(x=>!x)){transferStatus('Не все блюда сопоставлены с iiko. Раскройте документ.',true);return}
- const used=new Set();
- for(const x of list){
-   if(used.has(x.productId)){transferStatus('Два блюда попали в один код iiko. Сопоставление нужно исправить.',true);return}
-   used.add(x.productId);
+ const grouped=transferUploadLines(doc,index);
+ if(grouped.errors.length){
+   transferStatus('Перемещение не готово: '+grouped.errors.slice(0,3).join('; '),true);return;
  }
+ const list=grouped.items;
  let date;try{date=transferDate()}catch(e){transferStatus(e.message,true);return}
  const message='Отправить РЕАЛЬНОЕ внутреннее перемещение в iiko?\n'+
     doc.source+' → '+doc.target+'\nДата: '+date.slice(0,10)+
     '\nПозиций: '+list.length+', количество: '+list.reduce((a,x)=>a+x.amount,0)+
+    (grouped.merged?'\nОбъединены повторные строки: '+grouped.merged:'')+
     '\nСтатус NEW, без проведения. Номер генерирует iiko. Повтор создаст дубль.';
  if(!window.confirm(message))return;
  // Only lock after prerequisites have passed and a real network send can start.
@@ -517,11 +548,15 @@ async function transferSend(index){
   localStorage.setItem(key,'confirmed:'+result.id);
   transferLive.receipts.set(key,{ok:true,number:result.number||'',id:result.id});
   transferStatus('iiko приняла перемещение '+doc.source+' → '+doc.target+
-    ' (NEW, без проведения). '+(result.number?'Номер '+result.number:'ID '+result.id)+'.');
+    ' (NEW, без проведения). '+(result.number?'Номер '+result.number:'ID '+result.id)+
+    (result.verifiedByLookup?' (подтверждено проверкой по отметке)':'')+'.');
  }catch(e){
-  transferLive.receipts.set(key,{ok:false,error:String(e.message||e)});
-  transferStatus('Перемещение '+doc.source+' → '+doc.target+': '+String(e.message||e)+
-   '. Запрос отправлялся; кнопка остаётся заблокированной.',true);
+   const state=e?.transferState==='rejected'?'rejected':'unknown';
+   localStorage.setItem(key,state);
+   transferLive.receipts.set(key,{ok:false,error:String(e.message||e),state});
+   transferStatus('Перемещение '+doc.source+' → '+doc.target+': '+String(e.message||e)+
+      (state==='unknown'?'. Результат неизвестен; повтор заблокирован.':
+       '. Запрос отклонён; повтор заблокирован до проверки.'),true);
  }finally{
   transferLive.sending.delete(key);
   transferRender();
