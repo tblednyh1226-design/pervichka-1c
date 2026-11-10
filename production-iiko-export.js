@@ -14,8 +14,10 @@ function iikoDraftOnlyPositive(items){return (items||[]).filter(x=>Number.isFini
 function iikoDraftHashText(s){let h=2166136261;for(let k=0;k<s.length;k++){h^=s.charCodeAt(k);h=Math.imul(h,16777619)}return (h>>>0).toString(16).padStart(8,'0')}
 function iikoDraftInvalidate(reason){
   iikoDraftState.ready=false;iikoDraftState.readyByDoc={BK:false,PK:false};iikoDraftState.documents=[];iikoDraftState.issues=[];iikoDraftState.mismatches=[];
-  const btn=document.getElementById('iikoDraftDownload');
-  if(btn)btn.disabled=true;
+  for(const id of ['iikoDraftDownload','iikoDraftDownloadBK','iikoDraftDownloadPK']){
+    const btn=document.getElementById(id);
+    if(btn)btn.disabled=true;
+  }
   if(typeof iikoLiveRefreshButtons==='function')iikoLiveRefreshButtons();
   const mismatchesBtn=document.getElementById('iikoDraftMismatchDownload');
   if(mismatchesBtn)mismatchesBtn.disabled=true;
@@ -460,9 +462,13 @@ function iikoDraftCheck(){
     document.getElementById('iikoDraftStatus').textContent=missing?
       'Требуется выбрать соответствия iiko: '+missing+' строк. Используй поиск, затем «Подтвердить и запомнить».':
       data.issues.length?'Есть замечания: '+data.issues.length+'. Пакет не готов.':
-      'Сопоставление готово. '+(data.merged.length?'Суммированы '+data.merged.length+' повторные строки. ':'')+'Два акта готовы к отправке в iiko (NEW, без проведения).';
+      'Сопоставление готово. '+(data.merged.length?'Суммированы '+data.merged.length+' повторные строки. ':'')+'Акты можно отправлять раздельно: БК или ПК (NEW, без проведения).';
     const btn=document.getElementById('iikoDraftDownload');
     if(btn)btn.disabled=!iikoDraftState.ready;
+    for(const code of ['BK','PK']){
+      const separate=document.getElementById('iikoDraftDownload'+code);
+      if(separate)separate.disabled=!iikoDraftState.readyByDoc[code];
+    }
     const mismatchBtn=document.getElementById('iikoDraftMismatchDownload');
     if(mismatchBtn)mismatchBtn.disabled=!missing;
     if(typeof iikoLiveRefreshButtons==='function')iikoLiveRefreshButtons();
@@ -500,20 +506,26 @@ function iikoDraftXml(doc){
   // documentNumber intentionally omitted: the server, not the browser, assigns numbers.
   return '<?xml version="1.0" encoding="UTF-8"?>\n<document><status>NEW</status><dateIncoming>'+iikoDraftEsc(doc.dateIncoming)+'</dateIncoming><storeFrom>'+iikoDraftEsc(doc.storeFrom)+'</storeFrom><storeTo>'+iikoDraftEsc(doc.storeTo)+'</storeTo><comment>Помогатор: проект акта приготовления, без проведения</comment><items>'+lines+'</items></document>';
 }
-async function iikoDraftDownload(){
-  if(!iikoDraftState.ready)throw Error('Сначала сопоставьте неподтверждённые блюда со справочником iiko.');
+async function iikoDraftDownload(which='ALL'){
+  if(!['ALL','BK','PK'].includes(which))throw Error('Неизвестный акт приготовления');
+  const selected=which==='ALL'?['BK','PK']:[which];
+  if(selected.some(code=>!iikoDraftState.readyByDoc?.[code]))
+    throw Error('Сначала проверьте выбранный акт и сопоставьте все его блюда со справочником iiko.');
   if(typeof JSZip==='undefined')throw Error('Не загружен модуль ZIP');
+  const documents=selected.map(code=>iikoDraftState.documents.find(d=>d.warehouseCode===code));
+  if(documents.some(d=>!d))throw Error('Не найден выбранный акт приготовления');
   const zip=new JSZip();
   const json={schema:'pomogator.iiko.production-draft.v2',mode:'offline-test',endpoint:'/resto/api/documents/import/productionDocument',posted:false,
     numberPolicy:'omit-documentNumber',automaticNumberUnverified:true,
-    createdAt:new Date().toISOString(),signature:iikoDraftState.signature,documents:iikoDraftState.documents};
+    createdAt:new Date().toISOString(),signature:iikoDraftHashText(JSON.stringify(documents)),documents};
   zip.file('manifest.json',JSON.stringify(json,null,2));
-  for(const d of iikoDraftState.documents)zip.file('production-'+d.warehouseCode+'.xml',iikoDraftXml(d));
-  zip.file('README.txt','ТЕСТОВЫЙ ПАКЕТ. Два акта приготовления NEW без проведения и без номера. Поле documentNumber отсутствует: автоматическая нумерация iikoServer должна быть подтверждена на вашем сервере до включения отправки. Никакой проверки наличия существующих актов не выполняется. Повторная отправка может создать дубликаты. В iiko ничего не отправлено.');
+  for(const d of documents)zip.file('production-'+d.warehouseCode+'.xml',iikoDraftXml(d));
+  zip.file('README.txt','ТЕСТОВЫЙ ПАКЕТ: '+selected.join(', ')+'. Акт(ы) приготовления NEW без проведения и номера. Отправка в iiko не выполнялась. Повторная реальная отправка может создавать дубли.');
   const content=await zip.generateAsync({type:'blob'});
   const url=URL.createObjectURL(content),a=document.createElement('a');
-  a.href=url;a.download='iiko-draft-'+iikoDraftState.documents[0].dateIncoming.slice(0,10)+'.zip';
+  a.href=url;a.download='iiko-draft-'+documents[0].dateIncoming.slice(0,10)+'-'+(which==='ALL'?'BK-PK':which)+'.zip';
   document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),15000);
-  document.getElementById('iikoDraftStatus').textContent='Пакет скачан. В iiko ничего не передавалось.';
+  const status=document.getElementById('iikoDraftStatus');
+  if(status)status.textContent='Тестовый пакет '+(which==='ALL'?'БК и ПК':which)+' скачан. В iiko ничего не передавалось.';
 }
