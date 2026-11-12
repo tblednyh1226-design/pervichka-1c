@@ -426,18 +426,32 @@ function morningExportPreview(which='ALL'){
   XLSX.writeFile(book,filename,{bookType:'xlsx',compression:true});
 }
 
-// Manual fallback when MAIN is offline. Reads the same production workbook locally.
-async function morningLoadManualFile(input){
-  const file=input?.files?.[0];
+// Manual fallback when MAIN is offline; accepts picker or drag-and-drop.
+async function morningLoadManualBlob(file){
   if(!file)return;
   const status=document.getElementById('morningStatus');
+  const fileStatus=document.getElementById('morningManualFileStatus');
   try{
     if(!/\.xlsx?$/i.test(file.name))throw Error('Выберите файл Excel .xlsx или .xls');
+    if(fileStatus)fileStatus.textContent='Загружаю: '+file.name;
     if(status)status.textContent='Читаю файл '+file.name+'…';
     const bytes=await file.arrayBuffer();
     morningPrepareFromBytes(bytes,file.name);
-    if(!morningState.result && status)status.textContent='Файл загружен. Выберите дату и сформируйте акты.';
+    if(fileStatus)fileStatus.textContent='Файл выбран: '+file.name+' ('+morningState.book.SheetNames.length+' листов)';
   }catch(err){
-    if(status)status.textContent='Ошибка ручной загрузки: '+(err?.message||err);
-  }finally{input.value='';}
+    const message='Ошибка ручной загрузки: '+(err?.message||err);
+    if(status)status.textContent=message;
+    if(fileStatus)fileStatus.textContent=message;
+  }
+}
+async function morningLoadManualFile(input){
+  const file=input?.files?.[0];
+  if(!file)return;
+  await morningLoadManualBlob(file);
+  input.value='';
+}
+function morningDropManualFile(event){
+  event.preventDefault();
+  const file=event.dataTransfer?.files?.[0];
+  if(file)void morningLoadManualBlob(file);
 }
