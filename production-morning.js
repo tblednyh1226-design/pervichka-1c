@@ -425,3 +425,19 @@ function morningExportPreview(which='ALL'){
     'Акт приготовления '+r.date.iso+' '+which+'.xlsx';
   XLSX.writeFile(book,filename,{bookType:'xlsx',compression:true});
 }
+
+// Manual fallback when MAIN is offline. Reads the same production workbook locally.
+async function morningLoadManualFile(input){
+  const file=input?.files?.[0];
+  if(!file)return;
+  const status=document.getElementById('morningStatus');
+  try{
+    if(!/\.xlsx?$/i.test(file.name))throw Error('Выберите файл Excel .xlsx или .xls');
+    if(status)status.textContent='Читаю файл '+file.name+'…';
+    const bytes=await file.arrayBuffer();
+    morningPrepareFromBytes(bytes,file.name);
+    if(!morningState.result && status)status.textContent='Файл загружен. Выберите дату и сформируйте акты.';
+  }catch(err){
+    if(status)status.textContent='Ошибка ручной загрузки: '+(err?.message||err);
+  }finally{input.value='';}
+}
