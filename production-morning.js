@@ -437,6 +437,7 @@ async function morningLoadManualBlob(file){
     if(status)status.textContent='Читаю файл '+file.name+'…';
     const bytes=await file.arrayBuffer();
     morningPrepareFromBytes(bytes,file.name);
+    await morningSaveLocalWorkbook(bytes,file.name);
     if(fileStatus)fileStatus.textContent='Файл выбран: '+file.name+' ('+morningState.book.SheetNames.length+' листов)';
   }catch(err){
     const message='Ошибка ручной загрузки: '+(err?.message||err);
@@ -454,4 +455,50 @@ function morningDropManualFile(event){
   event.preventDefault();
   const file=event.dataTransfer?.files?.[0];
   if(file)void morningLoadManualBlob(file);
+}
+
+
+// Keep the last manually selected workbook in this browser, without sending it to a server.
+function morningLocalDb(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open('pomogator-manual-production',1);
+    req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains('files'))req.result.createObjectStore('files');};
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+async function morningSaveLocalWorkbook(bytes,name){
+  const db=await morningLocalDb();
+  try{
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('files','readwrite');
+      tx.objectStore('files').put({bytes,name,savedAt:Date.now()},'latest');
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+  }finally{db.close();}
+}
+async function morningLoadSavedWorkbook(){
+  const db=await morningLocalDb();
+  let item;
+  try{
+    item=await new Promise((resolve,reject)=>{
+      const req=db.transaction('files','readonly').objectStore('files').get('latest');
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error);
+    });
+  }finally{db.close();}
+  if(!item)return false;
+  morningPrepareFromBytes(item.bytes,item.name);
+  const el=document.getElementById('morningManualFileStatus');
+  if(el)el.textContent='Открыт сохранённый файл: '+item.name;
+  return true;
+}
+async function morningOpenLastAvailable(){
+  try{
+    if(await morningLoadSavedWorkbook())return;
+  }catch(e){
+    const el=document.getElementById('morningManualFileStatus');
+    if(el)el.textContent='Локальный файл не открылся: '+(e.message||e);
+  }
+  if(typeof planBridgeLoadLatest==='function')await planBridgeLoadLatest();
 }
