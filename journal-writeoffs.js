@@ -18,6 +18,10 @@ const KOLHOZ_PROCESSING_TABLE='kolhoz_writeoff_processing';
 const KOLHOZ_PROCESSING_KEYS={staff:'staff_writeoff_id',cloud:'cloud_writeoff_id'};
 let kolhozJournalRequestId=0;
 let kolhozJournalSaving=0;
+let kolhozJournalLoading=false;
+let kolhozJournalToken=null;
+let kolhozJournalRenderedSignature=null;
+const kolhozJournalRowsBySource=new Map();
 
 function storedJournalSession(){
  try{
@@ -45,9 +49,9 @@ async function journalAccessToken(){
  }catch(e){console.warn('Ошибка сессии журнала; пробую сохранённую авторизацию',e?.message||e)}
  return saved?.access_token||null;
 }
-async function kolhozJournalRequest(path,token,{method='GET',body}={}){
+async function kolhozJournalRequest(path,token,{method='GET',body,timeout=12000}={}){
  const controller=new AbortController();
- const timer=setTimeout(()=>controller.abort(),9000);
+ const timer=setTimeout(()=>controller.abort(),timeout);
  try{
   // Direct fetch avoids an occasional auth-lock deadlock in older supabase-js browsers.
   // Supabase verifies this user's JWT and enforces RLS; no service-role credentials.
@@ -62,20 +66,28 @@ async function kolhozJournalRequest(path,token,{method='GET',body}={}){
   if(response.status===401||response.status===403)throw Object.assign(new Error('Сессия истекла или нет доступа. Войдите повторно.'),{needsLogin:true});
   if(!response.ok){
    const detail=await response.json().catch(()=>null);
-   throw Object.assign(new Error(detail?.message||detail?.error||'Ошибка базы: HTTP '+response.status),{code:detail?.code});
+   throw Object.assign(new Error(detail?.message||detail?.error||'Ошибка базы: HTTP '+response.status),{code:detail?.code,retryable:response.status>=500});
   }
   const data=await response.json();
   if(!Array.isArray(data))throw new Error('База вернула неверный формат списка');
   return data;
  }catch(e){
-  if(e?.name==='AbortError')throw new Error('Сервер списаний не ответил за 9 секунд. Проверьте соединение и нажмите «Обновить».');
-  if(e instanceof TypeError)throw new Error('Нет связи с сервером списаний. Проверьте подключение и обновите журнал.');
+  if(e?.name==='AbortError')throw Object.assign(new Error('Сервер списаний не ответил вовремя.'),{retryable:true});
+  if(e instanceof TypeError)throw Object.assign(new Error('Нет связи с сервером списаний.'),{retryable:true});
   throw e;
  }finally{clearTimeout(timer)}
 }
+async function kolhozJournalRead(path,token){
+ try{
+  return await kolhozJournalRequest(path,token);
+ }catch(e){
+  if(!e?.retryable)throw e;
+  return kolhozJournalRequest(path,token,{timeout:16000});
+ }
+}
 async function loadKolhozSource(table,token){
- const columns='id,doc_date,shift,warehouse,status,items,created_at,updated_at';
- return kolhozJournalRequest(table+'?select='+encodeURIComponent(columns)
+ const columns='id,doc_date,shift,warehouse,status,created_at,updated_at';
+ return kolhozJournalRead(table+'?select='+encodeURIComponent(columns)
   +'&organization_id=eq.'+encodeURIComponent(GENERAL_KOLHOZ_ORG_ID)
   +'&order=created_at.desc&limit=100',token);
 }
@@ -85,7 +97,7 @@ async function loadKolhozProcessingMarks(inputs,token,requestId){
   if(!group.length)return;
   const list=group.map(input=>input.dataset.writeoffId).join(',');
   try{
-   const rows=await kolhozJournalRequest(KOLHOZ_PROCESSING_TABLE+'?select='+key+',is_processed'
+   const rows=await kolhozJournalRead(KOLHOZ_PROCESSING_TABLE+'?select='+key+',is_processed'
     +'&'+key+'=in.('+encodeURIComponent(list)+')',token);
    if(requestId!==kolhozJournalRequestId)return;
    const marks=new Set(rows.filter(row=>row.is_processed===true).map(row=>row[key]));
@@ -138,7 +150,8 @@ async function saveKolhozProcessed(input){
 }
 async function renderKolhozJournal(){
  const dest=document.getElementById('kolhozUnifiedJournal');
- if(!dest||kolhozJournalSaving)return;
+ if(!dest||kolhozJournalSaving||kolhozJournalLoading)return;
+ kolhozJournalLoading=true;
  const card=dest.parentElement;
  let refresh=document.getElementById('refreshKolhozJournal');
  if(!refresh&&card){
@@ -150,11 +163,18 @@ async function renderKolhozJournal(){
  }
  const requestId=++kolhozJournalRequestId;
  if(refresh)refresh.disabled=true;
- dest.textContent='Проверяю списания «Колхоза»…';
+ if(!dest.querySelector('.orgrow'))dest.textContent='Загружаю списания «Колхоза»…';
  const loginPanel=document.getElementById('journalAdminLoginPanel');
  try{
   const token=await journalAccessToken();
   if(requestId!==kolhozJournalRequestId)return;
+  if(token!==kolhozJournalToken){
+   // Keep the last list only while the same signed-in session is in use.
+   kolhozJournalRowsBySource.clear();
+   kolhozJournalToken=token;
+   kolhozJournalRenderedSignature=null;
+   dest.textContent='Загружаю списания «Колхоза»…';
+  }
   if(loginPanel)loginPanel.hidden=!!token;
   if(!token){
    dest.textContent='Необходимо войти в Помогатор, чтобы увидеть списания сотрудников.';
@@ -165,36 +185,47 @@ async function renderKolhozJournal(){
    {table:'kolhoz_writeoffs',label:'Списания из Помогатора',storage:'cloud'}
   ];
   const results=await Promise.allSettled(sources.map(async source=>{
-   const rows=await journalWithDeadline(()=>loadKolhozSource(source.table,token),11000,source.label);
+   const rows=await loadKolhozSource(source.table,token);
    return rows.map(doc=>({...doc,_storage:source.storage}));
   }));
   if(requestId!==kolhozJournalRequestId)return;
   let rows=[],warnings=[],unauthorized=false;
   for(let i=0;i<results.length;i++){
-   if(results[i].status==='fulfilled')rows.push(...results[i].value);
-   else{
+   const key=sources[i].storage;
+   if(results[i].status==='fulfilled'){
+    kolhozJournalRowsBySource.set(key,results[i].value);
+   }else{
     warnings.push(sources[i].label+': '+(results[i].reason?.message||'Ошибка загрузки'));
+    if(!results[i].reason?.retryable)kolhozJournalRowsBySource.delete(key);
     if(results[i].reason?.needsLogin)unauthorized=true;
    }
+   rows.push(...(kolhozJournalRowsBySource.get(key)||[]));
   }
   if(unauthorized&&loginPanel)loginPanel.hidden=false;
   const unique=[...new Map(rows.map(doc=>[doc.id,doc])).values()];
   unique.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
-  const errorText=warnings.length?'<p class="muted" role="alert">'+esc(warnings.join(' | '))+'</p>':'';
+  const errorText=warnings.length?'<p class="muted" role="alert" data-writeoff-refresh-error>'+esc(warnings.join(' | '))+'</p>':'';
   if(!unique.length){
+   kolhozJournalRenderedSignature=null;
    dest.innerHTML=(warnings.length?'<p class="muted">Не удалось загрузить списания. Нажмите «Обновить списания».</p>':'<p class="muted">Списаний пока нет.</p>')+errorText;
+   return;
+  }
+  const signature=JSON.stringify(unique);
+  if(kolhozJournalSaving&&!unauthorized)return;
+  if(warnings.length&&signature===kolhozJournalRenderedSignature&&dest.querySelector('.orgrow')){
+   dest.querySelector('[data-writeoff-refresh-error]')?.remove();
+   dest.insertAdjacentHTML('beforeend',errorText);
    return;
   }
   dest.innerHTML='<p class="muted">'+unique.length+' документ(ов) в журнале</p>'
    +'<p class="journal-processing-error" id="kolhozProcessingLoadResult" role="status"></p>'+unique.map(d=>{
-   const count=Array.isArray(d.items)?d.items.filter(x=>String(x.name||'').trim()).length:0;
    const title='Списание · '+esc(generalJournalDate(d.doc_date))+' · '+esc(d.warehouse||'Склад не указан');
    const label=d._storage==='staff'?'Сотрудники Колхоза':'Общий журнал';
    const url='./writeoffs.html?'+(d._storage==='staff'?'staffdoc=':'writeoff=')+encodeURIComponent(d.id);
    const status=d.status==='submitted'?'Отправлено':'Черновик';
    return '<div class="orgrow">'
     +'<span><b>'+title+'</b>'
-    +'<small>'+esc(status)+' · '+esc(d.shift||'Без смены')+' · '+count+' поз. · '+label+'</small>'
+    +'<small>'+esc(status)+' · '+esc(d.shift||'Без смены')+' · '+label+'</small>'
     +'</span><div class="journal-writeoff-actions">'
     +'<label class="journal-processing"><input type="checkbox" data-source="'+d._storage
     +'" data-writeoff-id="'+esc(d.id)+'" disabled> Обработано</label>'
@@ -202,6 +233,7 @@ async function renderKolhozJournal(){
     +'<small class="journal-processing-message" role="status"></small></div>'
     +'</div>';
   }).join('')+errorText;
+  kolhozJournalRenderedSignature=signature;
   const inputs=[...dest.querySelectorAll('.journal-processing input')];
   inputs.forEach(input=>{
    input.indeterminate=true;
@@ -210,8 +242,10 @@ async function renderKolhozJournal(){
   await loadKolhozProcessingMarks(inputs,token,requestId);
  }catch(e){
   if(requestId!==kolhozJournalRequestId)return;
+  kolhozJournalRenderedSignature=null;
   dest.textContent='Не удалось открыть журнал списаний: '+(e?.message||e)+'. Нажмите «Обновить списания».';
  }finally{
+  kolhozJournalLoading=false;
   if(requestId===kolhozJournalRequestId&&refresh)refresh.disabled=kolhozJournalSaving>0;
  }
 }
