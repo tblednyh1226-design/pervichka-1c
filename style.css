@@ -105,5 +105,7 @@ header .journal-shortcut:focus-visible{outline:3px solid #a4bdff;outline-offset:
 #kolhozUnifiedJournal .journal-processed .journal-processing{background:#ecfdf3;color:#067647}
 #kolhozUnifiedJournal .journal-processing-message{flex-basis:100%;margin:0;color:#b42318}
 #kolhozUnifiedJournal .journal-processing-message:empty{display:none}
+#kolhozUnifiedJournal .journal-processing-error{color:#b42318}
+#kolhozUnifiedJournal .journal-processing-error:empty{display:none}
 #refreshKolhozJournal{padding:8px 12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;cursor:pointer}
 @media(max-width:650px){header .journal-shortcut{font-size:12px;padding:9px 10px;margin-right:6px;white-space:normal;text-align:center}#kolhozUnifiedJournal .orgrow{flex-direction:column;align-items:stretch}}
