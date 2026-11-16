@@ -49,9 +49,9 @@ async function journalAccessToken(){
  }catch(e){console.warn('Ошибка сессии журнала; пробую сохранённую авторизацию',e?.message||e)}
  return saved?.access_token||null;
 }
-async function kolhozJournalRequest(path,token,{method='GET',body,timeout=12000}={}){
+async function kolhozJournalRequest(path,token,{method='GET',body}={}){
  const controller=new AbortController();
- const timer=setTimeout(()=>controller.abort(),timeout);
+ const timer=setTimeout(()=>controller.abort(),15000);
  try{
   // Direct fetch avoids an occasional auth-lock deadlock in older supabase-js browsers.
   // Supabase verifies this user's JWT and enforces RLS; no service-role credentials.
@@ -82,7 +82,7 @@ async function kolhozJournalRead(path,token){
   return await kolhozJournalRequest(path,token);
  }catch(e){
   if(!e?.retryable)throw e;
-  return kolhozJournalRequest(path,token,{timeout:16000});
+  return kolhozJournalRequest(path,token);
  }
 }
 async function loadKolhozSource(table,token){
