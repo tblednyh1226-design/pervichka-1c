@@ -117,8 +117,110 @@ function safeOrderName(v){return String(v).replace(/[\\/:*?"<>|]+/g,'_').replace
 function excelOrderDate(v,fallback){if(v instanceof Date&&!isNaN(v))return v;if(typeof v==='number'){const d=XLSX.SSF.parse_date_code(v);if(d)return new Date(d.y,d.m-1,d.d)}return fallback}
 function orderDateFromFilename(name){const m=String(name).match(/(\d{1,2})[.\-_](\d{1,2})(?:[.\-_](\d{2,4}))?/);if(!m)return new Date();let y=m[3]?Number(m[3]):new Date().getFullYear();if(y<100)y+=2000;return new Date(y,Number(m[2])-1,Number(m[1]))}
 function fmtOrderDate(d){return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()}
-function findOrderColumns(rows){const found={};const head=rows.find(r=>Array.isArray(r)&&r.some(v=>/^заказ\s+/i.test(String(v??'').trim())))||rows[0]||[];for(let c=0;c<head.length;c++){const raw=String(head[c]??'').trim();if(!raw||/^сумма\b/i.test(raw))continue;const standard=/^заказ\s+/i.test(raw);const withoutPrefix=!standard&&/\([^)]*ИП\s+[^)]*\)/i.test(raw);if(!standard&&!withoutPrefix)continue;const label=raw.replace(/^заказ\s+/i,'').replace(/\s*\([^)]*\)\s*$/,'').trim();if(label&&!Object.prototype.hasOwnProperty.call(found,label))found[label]=c;}return found}
+// Prefer the current flexible header format, with the former point names
+// available for report headers that wrap or omit the usual prefix.
+const LEGACY_ORDER_POINTS=['Просвещение 80','Просвещение 69','Орджоникидзе','Петровский','Шувалова','Ленинский 82','Коваленко','Индустриальный 34'];
+function readOrderHeader(row){
+ const found=new Map();
+ for(let col=0;col<row.length;col++){
+  const raw=String(row[col]??'').trim().replace(/\s+/g,' ');
+  const t=normOrderText(raw);
+  if(col<4||!t||t.includes('сумма'))continue;
+  const prefixed=/^заказ\s+/i.test(raw);
+  const buyer=/\([^)]*ИП\s+[^)]*\)/i.test(raw);
+  const known=LEGACY_ORDER_POINTS.find(label=>t.includes(normOrderText(label)));
+  if(!prefixed&&!buyer&&!(known&&(t.includes('заказ')||known==='Индустриальный 34')))continue;
+  const label=known||raw.replace(/^заказ\s+/i,'').replace(/\s*\([^)]*\)\s*$/,'').trim();
+  if(label&&!found.has(label))found.set(label,{col,raw});
+ }
+ return found;
+}
+function orderHeaderRow(row){
+ if(!Array.isArray(row))return false;
+ const left=normOrderText(row[0]);
+ if(left==='элемент номенклатуры')return true;
+ if(normOrderText(row[1])&&!/^(?:наименование(?: продукции)?|номенклатура|элемент номенклатуры|продукция|товар|название)$/.test(normOrderText(row[1])))return false;
+ return row.slice(4).some(v=>/заказ\s+|\([^)]*ип\s+[^)]*\)|индустриальн/i.test(String(v??'')));
+}
+function orderSectionName(value){
+ return normOrderText(value).replace(/\s+/g,' ').replace(/^категория\s*:\s*/,'').replace(/[«»"]/g,'').trim();
+}
+function orderSection(row){
+ const cells=row.slice(0,2).map(v=>String(v??'').trim());
+ for(const cell of cells){
+  const s=orderSectionName(cell);
+  if(s==='пекарня'||s==='выпечка'||s==='хлебобулочные изделия')return 'bakery';
+  if(s==='кулинария япония'||s==='япония')return 'japan';
+  if(s.includes('кондитерские изделия')&&(/^категория\s*:/i.test(cell)||/^кондитерские изделия$/.test(s)))return 'confectionery';
+  if(/^категория\s*:/i.test(cell)||s==='кулинария')return 'main';
+ }
+ return null;
+}
+function orderNumber(value){
+ if(typeof value==='number')return value;
+ if(typeof value!=='string')return NaN;
+ const cleaned=value.trim().replace(/[ \u00a0\u202f]/g,'').replace(',','.');
+ return /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(cleaned)?Number(cleaned):NaN;
+}
+function collectCustomerOrderRows(sheets,fallbackDate){
+ const main=Object.create(null),conf=Object.create(null),labels=new Set();
+ const bakeryFromMain=new Set();
+ let sawColumns=false;
+ let skippedBakerySheet=false;
+ for(const [si,sheet] of sheets.entries()){
+  let section=sheet.bakery?'bakery':'main';
+  let cols=new Map();
+  for(const [ri,row] of sheet.rows.entries()){
+   if(!Array.isArray(row))continue;
+   const header=(ri===0||orderHeaderRow(row))?readOrderHeader(row):new Map();
+   if(header.size){
+    cols=header;
+    for(const label of cols.keys())labels.add(label);
+    sawColumns=true;
+    continue;
+   }
+   if(normOrderText(row[0])==='элемент номенклатуры')continue;
+   const hasQty=[...cols.values()].some(({col})=>Number.isFinite(orderNumber(row[col]))&&orderNumber(row[col])!==0);
+   const tag=!hasQty?orderSection(row):null;
+   if(tag){section=tag;continue}
+   if(section==='japan'||!hasQty)continue;
+   const name=typeof row[1]==='string'?row[1].trim():'';
+   if(!name)continue;
+   for(const [label,{col,raw}] of cols){
+    const qty=orderNumber(row[col]);
+    if(!Number.isFinite(qty)||qty===0)continue;
+    const price=Number(row[2]);
+    const rawBuyer=raw.match(/\(([^)]+)\)/)?.[1]||(label==='Булима'?'ИП Булима':'');
+    const item={name,qty,unit:row[3]??'',price:Number.isFinite(price)?price:'',date:fallbackDate,buyer:rawBuyer.replace(/Гаюнова/gi,'Горюнова'),supplier:String(row[6]??'').trim(),point:label};
+    if(section==='bakery'){
+     const key=JSON.stringify([normOrderText(label),normOrderText(name),qty,normOrderText(item.unit),item.price]);
+     if(si===0)bakeryFromMain.add(key);
+     else if(bakeryFromMain.has(key))continue;
+    }
+    const orders=section==='confectionery'?conf:main;
+    (orders[label]??=[]).push(item);
+   }
+  }
+  if(sheet.bakery&&!cols.size)skippedBakerySheet=true;
+ }
+ if(!sawColumns)throw new Error('Не найдены столбцы заказов точек. Проверьте заголовки «Заказ ...».');
+ return {main,conf,points:[...labels].map(label=>[label]),skippedBakerySheet};
+}
 function buildOrderBook(rows){const aoa=rows.map(r=>[r.name,'',r.qty,r.unit,r.price,r.date]);const ws=XLSX.utils.aoa_to_sheet(aoa,{cellDates:true});ws['!cols']=[{wch:48},{wch:15},{wch:12},{wch:14},{wch:12},{wch:14}];for(let r=0;r<aoa.length;r++){const a=ws[XLSX.utils.encode_cell({r,c:5})];if(a)a.z='dd.mm.yyyy'}const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Заказ');return wb}
 function downloadPreparedOrder(i){const x=preparedOrders[i];XLSX.writeFile(buildOrderBook(x.rows),x.filename,{compression:true})}
 async function downloadAllPreparedOrders(){if(!preparedOrders.length)return;const btn=document.getElementById('ordersdownloadall');if(btn)btn.disabled=true;try{if(typeof JSZip==='undefined')throw new Error('Не загрузился модуль ZIP. Обновите страницу и повторите.');const zip=new JSZip();for(const x of preparedOrders){const data=XLSX.write(buildOrderBook(x.rows),{bookType:'xlsx',type:'array',compression:true});zip.file(x.filename,data)}const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='Заказы_'+(preparedOrders[0].filename.match(/^\d{2}\.\d{2}\.\d{4}/)||['все'])[0]+'.zip';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000)}catch(e){ordersstatus.textContent='Ошибка скачивания архива: '+(e.message||e)}finally{if(btn)btn.disabled=false}}
-async function processOrders(){const f=ordersfile.files[0];if(!f){ordersstatus.textContent='Выберите Excel с заказами.';return}ordersbtn.disabled=true;ordersstatus.textContent='Разбираю файл…';ordersresult.innerHTML='';try{const buf=await f.arrayBuffer();const book=XLSX.read(buf,{type:'array',cellDates:true});const sheet=book.Sheets[book.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,raw:true});const cols=findOrderColumns(rows);const headerRow=rows[0]||[];for(let ci=0;ci<headerRow.length;ci++){const h=String(headerRow[ci]??'').trim();if(/индустриальн/i.test(h)&&!/сумма/i.test(h)&&!Object.values(cols).includes(ci)){const label=h.replace(/^заказ\s+/i,'').replace(/\s*\([^)]*\)\s*$/,'').trim();cols[label]=ci;}}const points=Object.keys(cols).map(label=>[label,normOrderText(label)]);if(!points.length)throw new Error('Не найдены столбцы заказов точек. Проверьте заголовки «заказ ...».');const fallbackDate=orderDateFromFilename(f.name);let category='',japan=false;const main=Object.fromEntries(points.map(x=>[x[0],[]]));const conf=Object.fromEntries(points.map(x=>[x[0],[]]));for(let ri=0;ri<rows.length;ri++){const row=rows[ri],a=normOrderText(row[0]),name=row[1];if(a.startsWith('категория:')){category=normOrderText(row[0]);japan=false}if(normOrderText(name)==='кулинария япония'){japan=true;continue}if(a==='элемент номенклатуры')japan=false;if(!name||typeof name!=='string'||a==='элемент номенклатуры')continue;const isConf=category.includes('кондитерские изделия');for(const [label] of points){const q=Number(row[cols[label]]);if(!Number.isFinite(q)||q===0)continue;const header=String(rows[0]?.[cols[label]]??'');const rawBuyer=header.match(/\(([^)]+)\)/)?.[1]||(label==='Булима'?'ИП Булима':'');const buyer=rawBuyer.replace(/Гаюнова/gi,'Горюнова');const supplier=String(row[6]??'').trim();const item={name:String(name).trim(),qty:q,unit:row[3]??'',price:Number.isFinite(Number(row[2]))?Number(row[2]):'',date:fallbackDate,buyer,supplier,point:label};if(japan)continue;if(isConf)conf[label].push(item);else main[label].push(item)}}preparedOrders=[];for(const [label] of points){if(main[label].length)preparedOrders.push({title:'Основной · '+label,filename:fmtOrderDate(fallbackDate)+'_'+safeOrderName(label)+'_основной.xlsx',rows:main[label]})}for(const [label] of points){if(!conf[label].length)continue;if(label==='Просвещение 80'){const kul=conf[label].filter(x=>normOrderText(x.name).includes('кулинария'));const rest=conf[label].filter(x=>normOrderText(x.name).includes('ресторан')||['торт морковный ланч','торт медовик ланч','три шоколада ланч'].includes(normOrderText(x.name)));if(kul.length)preparedOrders.push({title:'Кондитерский · Просвещение 80 · Кулинария',filename:fmtOrderDate(fallbackDate)+'_Просвещение_80_Кулинария_кондитерский.xlsx',rows:kul});if(rest.length)preparedOrders.push({title:'Кондитерский · Просвещение 80 · Ресторан',filename:fmtOrderDate(fallbackDate)+'_Просвещение_80_Ресторан_кондитерский.xlsx',rows:rest})}else preparedOrders.push({title:'Кондитерский · '+label,filename:fmtOrderDate(fallbackDate)+'_'+safeOrderName(label)+'_кондитерский.xlsx',rows:conf[label]})}ordersstatus.textContent='Найдены точки: '+points.map(([label])=>label+' ('+((main[label]||[]).length+(conf[label]||[]).length)+' поз.)').join('; ')+'. Готово. Япония исключена из всех файлов. Выпечка включена в основные заказы кулинарии, кондитерский цех вынесен отдельно. В файлах для 1С нет строки заголовков.';ordersresult.innerHTML='<button id="ordersdownloadall" class="primary" onclick="downloadAllPreparedOrders()">Скачать все одним разом (ZIP)</button><div class="orderlist">'+preparedOrders.map((x,i)=>'<div class="orgrow"><span><b>'+esc(x.title)+'</b><small>'+x.rows.length+' поз. · '+x.rows.reduce((s,r)=>s+(Number(r.qty)||0)*(Number(r.price)||0),0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽</small></span><button class="orderdownload" onclick="downloadPreparedOrder('+i+')">Скачать XLSX</button></div>').join('')+'</div>'}catch(e){console.error(e);ordersstatus.textContent='Ошибка: '+(e.message||e)}finally{ordersbtn.disabled=false}}
+async function processOrders(){
+ const f=ordersfile.files[0];
+ if(!f){ordersstatus.textContent='Выберите Excel с заказами.';return}
+ ordersbtn.disabled=true;
+ ordersstatus.textContent='Разбираю файл…';
+ ordersresult.innerHTML='';
+ try{
+ const book=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:true});
+ const sheets=book.SheetNames.map((name,index)=>({name,index,bakery:/^(пекарня|выпечка|хлебобулочные изделия)$/.test(orderSectionName(name))}))
+  .filter(s=>s.index===0||s.bakery)
+  .map(s=>({...s,rows:XLSX.utils.sheet_to_json(book.Sheets[s.name],{header:1,defval:null,raw:true})}));
+ const fallbackDate=orderDateFromFilename(f.name);
+ const {main,conf,points,skippedBakerySheet}=collectCustomerOrderRows(sheets,fallbackDate);
+ for(const [label] of points){main[label]??=[];conf[label]??=[]}
+ preparedOrders=[];for(const [label] of points){if(main[label].length)preparedOrders.push({title:'Основной · '+label,filename:fmtOrderDate(fallbackDate)+'_'+safeOrderName(label)+'_основной.xlsx',rows:main[label]})}for(const [label] of points){if(!conf[label].length)continue;if(label==='Просвещение 80'){const kul=conf[label].filter(x=>normOrderText(x.name).includes('кулинария'));const rest=conf[label].filter(x=>normOrderText(x.name).includes('ресторан')||['торт морковный ланч','торт медовик ланч','три шоколада ланч'].includes(normOrderText(x.name)));if(kul.length)preparedOrders.push({title:'Кондитерский · Просвещение 80 · Кулинария',filename:fmtOrderDate(fallbackDate)+'_Просвещение_80_Кулинария_кондитерский.xlsx',rows:kul});if(rest.length)preparedOrders.push({title:'Кондитерский · Просвещение 80 · Ресторан',filename:fmtOrderDate(fallbackDate)+'_Просвещение_80_Ресторан_кондитерский.xlsx',rows:rest})}else preparedOrders.push({title:'Кондитерский · '+label,filename:fmtOrderDate(fallbackDate)+'_'+safeOrderName(label)+'_кондитерский.xlsx',rows:conf[label]})}ordersstatus.textContent='Найдены точки: '+points.map(([label])=>label+' ('+((main[label]||[]).length+(conf[label]||[]).length)+' поз.)').join('; ')+'. Готово. Япония исключена из всех файлов. Выпечка включена в основные заказы кулинарии, кондитерский цех вынесен отдельно. В файлах для 1С нет строки заголовков.'+(skippedBakerySheet?' Не найдены столбцы заказов на листе выпечки.':'');ordersresult.innerHTML='<button id="ordersdownloadall" class="primary" onclick="downloadAllPreparedOrders()">Скачать все одним разом (ZIP)</button><div class="orderlist">'+preparedOrders.map((x,i)=>'<div class="orgrow"><span><b>'+esc(x.title)+'</b><small>'+x.rows.length+' поз. · '+x.rows.reduce((s,r)=>s+(Number(r.qty)||0)*(Number(r.price)||0),0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽</small></span><button class="orderdownload" onclick="downloadPreparedOrder('+i+')">Скачать XLSX</button></div>').join('')+'</div>'}catch(e){console.error(e);ordersstatus.textContent='Ошибка: '+(e.message||e)}finally{ordersbtn.disabled=false}}
