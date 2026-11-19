@@ -119,28 +119,87 @@ function orderDateFromFilename(name){const m=String(name).match(/(\d{1,2})[.\-_]
 function fmtOrderDate(d){return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()}
 // Prefer the current flexible header format, with the former point names
 // available for report headers that wrap or omit the usual prefix.
-const LEGACY_ORDER_POINTS=['Просвещение 80','Просвещение 69','Орджоникидзе','Петровский','Шувалова','Ленинский 82','Коваленко','Индустриальный 34'];
-function readOrderHeader(row){
+const LEGACY_ORDER_POINTS=['Просвещение 80','Просвещение 69','Орджоникидзе','Петровский','Шувалова','Ленинский 82','Коваленко','Индустриальный 34','Булима'];
+const orderHeaderText=value=>String(value??'').trim().replace(/\s+/g,' ');
+const isOrderQuantityHeader=t=>/^заказ(?:$|[\s:–—-])/iu.test(t);
+const isOrderAuxiliaryHeader=t=>/^(?:выпуск|сумма|итого|остаток|цена|отгрузка|возврат|списание|поставщик)(?:$|[\s:–—(-])/iu.test(t);
+const isOrderBuyerHeader=t=>/^(?:ип|ооо|ао|пао|самозанятый|покупатель|контрагент)(?:$|[\s:–—-])/iu.test(t)||/^индивидуальный предприниматель(?:$|\s)/iu.test(t);
+function orderColumnName(col){
+ let name='';
+ for(let n=col+1;n>0;n=Math.floor((n-1)/26))name=String.fromCharCode(65+(n-1)%26)+name;
+ return name;
+}
+function orderPointName(value){
+ const name=orderHeaderText(value).replace(/^заказ(?:$|[\s:–—-]+)/iu,'').trim();
+ if(!name||isOrderAuxiliaryHeader(name)||isOrderBuyerHeader(name)||/^[\d\s.,]+$/.test(name))return '';
+ if(/^\([^)]*\)$/.test(name))return '';
+ const clean=name.replace(/\s*\(([^)]*)\)\s*$/u,(full,inner)=>isOrderBuyerHeader(inner.trim())||!/\d/.test(inner)?'':full)
+  .replace(/\s*[,;–—-]?\s+(?:ип|ооо|ао|пао)\s+.*$/iu,'').trim();
+ const t=normOrderText(clean);
+ if(!clean||/^(?:точка|название точки|адрес|заказы|покупателя|покупателей|номенклатура|наименование|кол(?:ичество|-во)|розница|на выпуск)$/iu.test(clean))return '';
+ const known=LEGACY_ORDER_POINTS.find(label=>t===normOrderText(label));
+ if(known)return known;
+ if(t==='коваленкова')return 'Коваленко';
+ return clean;
+}
+function looksLikeBuyerName(name){
+ if(LEGACY_ORDER_POINTS.includes(name))return false;
+ return /^(?:[А-ЯЁ][а-яё-]+\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.?|[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+)$/u.test(name)
+  || (!/\s/u.test(name)&&/(?:ов[а]?|ев[а]?|ин[а]?|ын[а]?|енко|ян|ский|ская|чук|юк)$/iu.test(name));
+}
+function isOrderHeaderBand(row){
+ if(!Array.isArray(row)||orderSection(row))return false;
+ if(normOrderText(row[0])==='элемент номенклатуры')return true;
+ const name=normOrderText(row[1]);
+ if(name&&!/^(?:наименование(?: продукции)?|номенклатура|элемент номенклатуры|продукция|товар|название|точка|адрес|покупатель|контрагент|заказчик)$/iu.test(name))return false;
+ return !row.slice(2).some(v=>typeof v==='number'&&Number.isFinite(v));
+}
+function readOrderHeader(rows,ri,merges){
+ const row=rows[ri];
+ const getName=(r,c)=>{
+  const direct=orderHeaderText(rows[r]?.[c]);
+  if(direct)return direct;
+  const merge=merges.find(m=>m.s.r<=r&&m.e.r>=r&&m.s.c<=c&&m.e.c>=c&&m.s.c>=4);
+  return merge?orderHeaderText(rows[merge.s.r]?.[merge.s.c]):'';
+ };
+ if(!isOrderHeaderBand(row))return new Map();
+ const t0=normOrderText(row[0]),t1=normOrderText(row[1]);
+ const productHeader=t0==='элемент номенклатуры'||/^(?:наименование(?: продукции)?|номенклатура|элемент номенклатуры|продукция|товар|название)$/iu.test(t1);
+ const orderLine=row.slice(4).some(v=>isOrderQuantityHeader(orderHeaderText(v)));
+ const neighbor=[];
+ for(const direction of [-1,1]){
+  for(let i=ri+direction;Math.abs(i-ri)<=3&&i>=0&&i<rows.length;i+=direction){
+   if(!isOrderHeaderBand(rows[i]))break;
+   neighbor.push(i);
+  }
+ }
+ const otherOrderLine=neighbor.some(r=>rows[r].slice(4).some(v=>isOrderQuantityHeader(orderHeaderText(v))));
+ const labeledBuyer=t0.match(/^(?:покупатель|контрагент|заказчик)$/u)||t1.match(/^(?:покупатель|контрагент|заказчик)$/u);
+ if(labeledBuyer||(!orderLine&&!productHeader&&otherOrderLine))return new Map();
+ const width=Math.max(row.length,...neighbor.map(i=>rows[i].length));
  const found=new Map();
- for(let col=0;col<row.length;col++){
-  const raw=String(row[col]??'').trim().replace(/\s+/g,' ');
-  const t=normOrderText(raw);
-  if(col<4||!t||t.includes('сумма'))continue;
-  const prefixed=/^заказ\s+/i.test(raw);
-  const buyer=/\([^)]*ИП\s+[^)]*\)/i.test(raw);
-  const known=LEGACY_ORDER_POINTS.find(label=>t.includes(normOrderText(label)));
-  if(!prefixed&&!buyer&&!(known&&(t.includes('заказ')||known==='Индустриальный 34')))continue;
-  const label=known||raw.replace(/^заказ\s+/i,'').replace(/\s*\([^)]*\)\s*$/,'').trim();
-  if(label&&!found.has(label))found.set(label,{col,raw});
+ for(let col=4;col<width;col++){
+  const raw=orderHeaderText(row[col]);
+  if(isOrderAuxiliaryHeader(raw))continue;
+  const cells=[{r:ri,text:raw},...neighbor.map(r=>({r,text:getName(r,col)}))];
+  const explicit=isOrderQuantityHeader(raw);
+  const titled=raw&&orderPointName(raw);
+  const neighborAux=cells.slice(1).some(c=>isOrderAuxiliaryHeader(c.text));
+  const buyerCell=cells.map(c=>c.text.replace(/^заказ(?:$|[\s:–—-]+)/iu,'').trim())
+   .find(text=>isOrderBuyerHeader(text)||/\((?:ип|ооо|ао|пао)\s/iu.test(text));
+  const legacy=titled&&LEGACY_ORDER_POINTS.includes(titled);
+  const buyerPaired=raw&&!!buyerCell&&!isOrderBuyerHeader(raw)&&!looksLikeBuyerName(titled);
+  if(!explicit&&(!raw||neighborAux||!(legacy||buyerPaired)))continue;
+  const fromPointRow=cells.slice(1).filter(c=>!isOrderQuantityHeader(c.text)&&!isOrderAuxiliaryHeader(c.text))
+   .map(({r,text})=>({name:orderPointName(text),labeled:/^(?:точка|название точки|адрес|магазин|склад)$/iu.test(orderHeaderText(rows[r]?.[0])||orderHeaderText(rows[r]?.[1]))}))
+   .filter(p=>p.name&&!looksLikeBuyerName(p.name));
+  const basePoint=fromPointRow.find(p=>p.labeled)?.name
+   || (titled&&!looksLikeBuyerName(titled)?titled:'')
+   || fromPointRow[0]?.name || '';
+  const buyer=buyerCell?.match(/\(([^)]*)\)/u)?.[1]||(buyerCell&&isOrderBuyerHeader(buyerCell)?buyerCell:'')||(basePoint==='Булима'?'ИП Булима':'');
+  found.set(col,{col,basePoint,buyer});
  }
  return found;
-}
-function orderHeaderRow(row){
- if(!Array.isArray(row))return false;
- const left=normOrderText(row[0]);
- if(left==='элемент номенклатуры')return true;
- if(normOrderText(row[1])&&!/^(?:наименование(?: продукции)?|номенклатура|элемент номенклатуры|продукция|товар|название)$/.test(normOrderText(row[1])))return false;
- return row.slice(4).some(v=>/заказ\s+|\([^)]*ип\s+[^)]*\)|индустриальн/i.test(String(v??'')));
 }
 function orderSectionName(value){
  return normOrderText(value).replace(/\s+/g,' ').replace(/^категория\s*:\s*/,'').replace(/[«»"]/g,'').trim();
@@ -170,48 +229,74 @@ function orderNumber(value){
  return /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(cleaned)?Number(cleaned):NaN;
 }
 function collectCustomerOrderRows(sheets,fallbackDate){
- const main=Object.create(null),conf=Object.create(null),labels=new Set();
+ const main=Object.create(null),conf=Object.create(null),points=new Map();
  const bakeryFromMain=new Set();
  let sawColumns=false;
  let skippedBakerySheet=false;
+ function registerPoint(meta,sheet,si){
+  const axis=normOrderText(meta.basePoint);
+  const slot=orderColumnName(meta.col);
+  const known=axis?points.get(JSON.stringify([axis,meta.col])):null;
+  const matches=si>0&&axis?[...points.values()].filter(p=>p.axis===axis&&p.si===0):[];
+  if(si>0&&matches.length===1)return matches[0];
+  const key=JSON.stringify(axis?[axis,meta.col]:['',si,meta.col]);
+  if(known||points.has(key))return known||points.get(key);
+  const basePoint=meta.basePoint||'';
+  const point={key,axis,basePoint,slot,si,sheetName:sheet.name||'',name:basePoint||'Столбец '+slot};
+  points.set(key,point);
+  return point;
+ }
  for(const [si,sheet] of sheets.entries()){
   let section=sheet.bakery?'bakery':'main';
   let cols=new Map();
   for(const [ri,row] of sheet.rows.entries()){
    if(!Array.isArray(row))continue;
-   const header=(ri===0||orderHeaderRow(row))?readOrderHeader(row):new Map();
+   const header=readOrderHeader(sheet.rows,ri,sheet.merges||[]);
    if(header.size){
-    cols=header;
-    for(const label of cols.keys())labels.add(label);
+    cols=new Map([...header].map(([col,meta])=>{
+     const previous=cols.get(col);
+     if(previous&&!meta.basePoint)meta={...meta,basePoint:previous.basePoint,buyer:meta.buyer||previous.buyer};
+     return [col,{...meta,point:registerPoint(meta,sheet,si)}];
+    }));
     sawColumns=true;
     continue;
    }
    if(normOrderText(row[0])==='элемент номенклатуры')continue;
-   const hasQty=[...cols.values()].some(({col})=>Number.isFinite(orderNumber(row[col]))&&orderNumber(row[col])!==0);
+   const hasQty=[...cols.keys()].some(col=>Number.isFinite(orderNumber(row[col]))&&orderNumber(row[col])!==0);
    const tag=!hasQty?orderSection(row):null;
    if(tag){section=tag;continue}
    if(section==='japan'||!hasQty)continue;
    const name=typeof row[1]==='string'?row[1].trim():'';
    if(!name||isExcludedOrderRoll(name)||isExcludedOrderSoySauce(name))continue;
-   for(const [label,{col,raw}] of cols){
+   for(const [col,{buyer,point}] of cols){
     const qty=orderNumber(row[col]);
     if(!Number.isFinite(qty)||qty===0)continue;
-    const price=Number(row[2]);
-    const rawBuyer=raw.match(/\(([^)]+)\)/)?.[1]||(label==='Булима'?'ИП Булима':'');
-    const item={name,qty,unit:row[3]??'',price:Number.isFinite(price)?price:'',date:fallbackDate,buyer:rawBuyer.replace(/Гаюнова/gi,'Горюнова'),supplier:String(row[6]??'').trim(),point:label};
+    const price=Number(row[2]),key=point.key;
+    const item={name,qty,unit:row[3]??'',price:Number.isFinite(price)?price:'',date:fallbackDate,buyer:buyer.replace(/Гаюнова/gi,'Горюнова'),supplier:String(row[6]??'').trim(),point:point.name};
     if(section==='bakery'){
-     const key=JSON.stringify([normOrderText(label),normOrderText(name),qty,normOrderText(item.unit),item.price]);
-     if(si===0)bakeryFromMain.add(key);
-     else if(bakeryFromMain.has(key))continue;
+     const sig=JSON.stringify([key,normOrderText(name),qty,normOrderText(item.unit),item.price]);
+     if(si===0)bakeryFromMain.add(sig);
+     else if(bakeryFromMain.has(sig))continue;
     }
     const orders=section==='confectionery'?conf:main;
-    (orders[label]??=[]).push(item);
+    (orders[key]??=[]).push(item);
    }
   }
   if(sheet.bakery&&!cols.size)skippedBakerySheet=true;
  }
  if(!sawColumns)throw new Error('Не найдены столбцы заказов точек. Проверьте заголовки «Заказ ...».');
- return {main,conf,points:[...labels].map(label=>[label]),skippedBakerySheet};
+ const used=[...points.values()].filter(p=>main[p.key]?.length||conf[p.key]?.length);
+ const filenameCounts=new Map();
+ for(const p of used){
+  const nameKey=normOrderText(safeOrderName(p.name));
+  filenameCounts.set(nameKey,(filenameCounts.get(nameKey)||0)+1);
+ }
+ for(const p of used){
+  if(filenameCounts.get(normOrderText(safeOrderName(p.name)))>1)
+   p.name+=(p.si===0?' · столбец '+p.slot:' · '+p.sheetName+' · столбец '+p.slot);
+  for(const row of [...(main[p.key]||[]),...(conf[p.key]||[])])row.point=p.name;
+ }
+ return {main,conf,points:used,skippedBakerySheet,unknownPoints:used.filter(p=>!p.basePoint).map(p=>p.name)};
 }
 function buildOrderBook(rows){const aoa=rows.map(r=>[r.name,'',r.qty,r.unit,r.price,r.date]);const ws=XLSX.utils.aoa_to_sheet(aoa,{cellDates:true});ws['!cols']=[{wch:48},{wch:15},{wch:12},{wch:14},{wch:12},{wch:14}];for(let r=0;r<aoa.length;r++){const a=ws[XLSX.utils.encode_cell({r,c:5})];if(a)a.z='dd.mm.yyyy'}const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Заказ');return wb}
 function downloadPreparedOrder(i){const x=preparedOrders[i];XLSX.writeFile(buildOrderBook(x.rows),x.filename,{compression:true})}
@@ -226,8 +311,26 @@ async function processOrders(){
  const book=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:true});
  const sheets=book.SheetNames.map((name,index)=>({name,index,bakery:/^(пекарня|выпечка|хлебобулочные изделия)$/.test(orderSectionName(name))}))
   .filter(s=>s.index===0||s.bakery)
-  .map(s=>({...s,rows:XLSX.utils.sheet_to_json(book.Sheets[s.name],{header:1,defval:null,raw:true})}));
+  .map(s=>{
+   const sheet=book.Sheets[s.name];
+   const range=sheet['!ref']?{s:{r:0,c:0},e:XLSX.utils.decode_range(sheet['!ref']).e}:undefined;
+   return {...s,merges:sheet['!merges']||[],rows:XLSX.utils.sheet_to_json(sheet,{header:1,defval:null,raw:true,blankrows:true,range})};
+  });
  const fallbackDate=orderDateFromFilename(f.name);
- const {main,conf,points,skippedBakerySheet}=collectCustomerOrderRows(sheets,fallbackDate);
- for(const [label] of points){main[label]??=[];conf[label]??=[]}
- preparedOrders=[];for(const [label] of points){if(main[label].length)preparedOrders.push({title:'Основной · '+label,filename:fmtOrderDate(fallbackDate)+'_'+safeOrderName(label)+'_основной.xlsx',rows:main[label]})}for(const [label] of points){if(!conf[label].length)continue;if(label==='Просвещение 80'){const kul=conf[label].filter(x=>normOrderText(x.name).includes('кулинария'));const rest=conf[label].filter(x=>normOrderText(x.name).includes('ресторан')||['торт морковный ланч','торт медовик ланч','три шоколада ланч'].includes(normOrderText(x.name)));if(kul.length)preparedOrders.push({title:'Кондитерский · Просвещение 80 · Кулинария',filename:fmtOrderDate(fallbackDate)+'_Просвещение_80_Кулинария_кондитерский.xlsx',rows:kul});if(rest.length)preparedOrders.push({title:'Кондитерский · Просвещение 80 · Ресторан',filename:fmtOrderDate(fallbackDate)+'_Просвещение_80_Ресторан_кондитерский.xlsx',rows:rest})}else preparedOrders.push({title:'Кондитерский · '+label,filename:fmtOrderDate(fallbackDate)+'_'+safeOrderName(label)+'_кондитерский.xlsx',rows:conf[label]})}ordersstatus.textContent='Найдены точки: '+points.map(([label])=>label+' ('+((main[label]||[]).length+(conf[label]||[]).length)+' поз.)').join('; ')+'. Готово. Япония, роллы и соевый соус исключены из всех файлов. Выпечка включена в основные заказы кулинарии, кондитерский цех вынесен отдельно. В файлах для 1С нет строки заголовков.'+(skippedBakerySheet?' Не найдены столбцы заказов на листе выпечки.':'');ordersresult.innerHTML='<button id="ordersdownloadall" class="primary" onclick="downloadAllPreparedOrders()">Скачать все одним разом (ZIP)</button><div class="orderlist">'+preparedOrders.map((x,i)=>'<div class="orgrow"><span><b>'+esc(x.title)+'</b><small>'+x.rows.length+' поз. · '+x.rows.reduce((s,r)=>s+(Number(r.qty)||0)*(Number(r.price)||0),0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽</small></span><button class="orderdownload" onclick="downloadPreparedOrder('+i+')">Скачать XLSX</button></div>').join('')+'</div>'}catch(e){console.error(e);ordersstatus.textContent='Ошибка: '+(e.message||e)}finally{ordersbtn.disabled=false}}
+ const {main,conf,points,skippedBakerySheet,unknownPoints}=collectCustomerOrderRows(sheets,fallbackDate);
+ preparedOrders=[];
+ const add=(kind,point,rows,suffix,detail='')=>{
+  if(!rows.length)return;
+  const filename=fmtOrderDate(fallbackDate)+'_'+safeOrderName(point.name+(detail?' '+detail:''))+'_'+suffix+'.xlsx';
+  preparedOrders.push({title:kind+' · '+point.name+(detail?' · '+detail:''),filename,rows});
+ };
+ for(const point of points)add('Основной',point,main[point.key]||[],'основной');
+ for(const point of points){
+  const items=conf[point.key]||[];
+  if(point.basePoint==='Просвещение 80'){
+   add('Кондитерский',point,items.filter(x=>normOrderText(x.name).includes('кулинария')),'кондитерский','Кулинария');
+   add('Кондитерский',point,items.filter(x=>normOrderText(x.name).includes('ресторан')||['торт морковный ланч','торт медовик ланч','три шоколада ланч'].includes(normOrderText(x.name))),'кондитерский','Ресторан');
+  }else add('Кондитерский',point,items,'кондитерский');
+ }
+ ordersstatus.textContent='Точки по столбцам Excel: '+points.map(p=>p.name+' ('+((main[p.key]||[]).length+(conf[p.key]||[]).length)+' поз.)').join('; ')+'. Япония, роллы и соевый соус исключены. Выпечка входит в основные заказы, кондитерка — отдельно.'+(unknownPoints.length?' Не найдены названия точек для: '+unknownPoints.join(', ')+'. Эти заказы оставлены отдельными файлами по столбцам.':'')+(skippedBakerySheet?' Не найдены столбцы заказов на листе выпечки.':'');
+ ordersresult.innerHTML='<button id="ordersdownloadall" class="primary" onclick="downloadAllPreparedOrders()">Скачать все одним разом (ZIP)</button><div class="orderlist">'+preparedOrders.map((x,i)=>'<div class="orgrow"><span><b>'+esc(x.title)+'</b><small>'+x.rows.length+' поз. · '+x.rows.reduce((s,r)=>s+(Number(r.qty)||0)*(Number(r.price)||0),0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽</small></span><button class="orderdownload" onclick="downloadPreparedOrder('+i+')">Скачать XLSX</button></div>').join('')+'</div>'}catch(e){console.error(e);ordersstatus.textContent='Ошибка: '+(e.message||e)}finally{ordersbtn.disabled=false}}
