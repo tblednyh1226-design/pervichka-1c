@@ -89,9 +89,7 @@ async function saveKolhozProcessed(input){
  input.disabled=true;
  message.textContent='Сохраняю…';
  try{
-  const token=await journalAccessToken();
-  if(!token)throw new Error('Войдите в Помогатор повторно.');
-  const saved=await kolhozJournalGateway('mark',token,{source:input.dataset.source,id:input.dataset.writeoffId,checked});
+  const saved=await kolhozJournalGateway('mark',null,{source:input.dataset.source,id:input.dataset.writeoffId,checked});
   if(saved.is_processed!==checked)throw new Error('Сервер не подтвердил изменение.');
   row.classList.toggle('journal-processed',checked);
   const cached=kolhozJournalRowsBySource.get(input.dataset.source)?.find(doc=>doc.id===input.dataset.writeoffId);
