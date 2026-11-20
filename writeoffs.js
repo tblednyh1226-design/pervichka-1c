@@ -464,18 +464,18 @@ async function init(){
   const staffDocId=new URLSearchParams(location.search).get('staffdoc');
   const requestId=new URLSearchParams(location.search).get('writeoff');
   if(staffDocId){
-   if(!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(staffDocId)||guestMode){
-    say('Документ сотрудников можно открыть только из авторизованного интерфейса администратора.','error');
+   if(!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(staffDocId)){
+    say('Некорректная ссылка на списание сотрудника.','error');
    }else{
-    const reply=await sb.from('kolhoz_staff_writeoffs')
-      .select('id,organization_id,workspace_id,doc_date,shift,warehouse,items,status,created_at,updated_at,submitted_at')
-      .eq('organization_id',orgId).eq('id',staffDocId).maybeSingle();
-    if(reply.error)throw reply.error;
-    if(reply.data){
-      fillDocument({...reply.data,created_by:null});
-      viewOnly=true;updateMode();
-      say('Списание сотрудника открыто в режиме просмотра. Доступны печать и Excel.','success');
-    }else say('Документ сотрудника не найден или недоступен.','error');
+    const response=await fetch(SUPABASE_URL+'/functions/v1/pomogator-internal-journal',{
+     method:'POST',headers:{'Content-Type':'text/plain'},
+     body:JSON.stringify({action:'detail',source:'staff',id:staffDocId})
+    });
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.error||'Не удалось загрузить списание сотрудника');
+    fillDocument({...result.document,created_by:null});
+    viewOnly=true;updateMode();
+    say('Списание сотрудника открыто без авторизации. Доступны печать и Excel.','success');
    }
   }else if(requestId){
    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)){
