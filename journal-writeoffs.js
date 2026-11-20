@@ -124,7 +124,7 @@ async function renderKolhozJournal(){
  if(!dest.querySelector('.orgrow'))dest.textContent='Загружаю списания «Колхоза»…';
  const loginPanel=document.getElementById('journalAdminLoginPanel');
  try{
-  const token=await journalAccessToken();
+  const token=null;
   if(requestId!==kolhozJournalRequestId)return;
   if(token!==kolhozJournalToken){
    // Keep the last list only while the same signed-in session is in use.
@@ -133,11 +133,7 @@ async function renderKolhozJournal(){
    kolhozJournalRenderedSignature=null;
    dest.textContent='Загружаю списания «Колхоза»…';
   }
-  if(loginPanel)loginPanel.hidden=!!token;
-  if(!token){
-   dest.textContent='Необходимо войти в Помогатор, чтобы увидеть списания сотрудников.';
-   return;
-  }
+  if(loginPanel)loginPanel.hidden=true;
   let groups;
   try{
    groups=await kolhozJournalRead('writeoffs',token);
