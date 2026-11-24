@@ -587,7 +587,8 @@ function productionBuild(){
    const brQuantity=productionQuantity(rawBr);
    if(!productionBlankQuantity(rawBr)&&brQuantity===null)
      throw Error('Строка '+(i+1)+': некорректное количество БР');
-   if(!isPastry&&brQuantity>0)excludedBRRegular+=brQuantity;
+   const burgerBun=/^булочк[аи] для бургер[а-я]*(?:\s|$)/u.test(productionNorm(entry.name));
+   if(!isPastry&&brQuantity>0&&!burgerBun)excludedBRRegular+=brQuantity;
    let pastryUpstream=0;
    if(isPastry){
      const rawTotal=row[context.pastryColumns.totalCol];
@@ -607,7 +608,7 @@ function productionBuild(){
        throw Error('Строка '+(i+1)+': выпечки БР больше, чем «Всего» минус ПР');
      if(brQuantity>0)brPastryMoved+=brQuantity;
    }
-   if(!quantities.size&&!pastryUpstream)continue;
+   if(!quantities.size&&!pastryUpstream&&!(burgerBun&&brQuantity>0))continue;
    if(!/^\d+$/.test(entry.code))
      missingCodes.push('Строка '+entry.sourceRow+': «'+entry.name+
        '» — нет числового кода (оставлено в черновике для сопоставления)');
@@ -620,16 +621,15 @@ function productionBuild(){
    }
    // All pastry except PR is received by BK. Of that amount, BR receives
    // only its own pastry via BK→BR; ordinary BR dishes remain excluded.
-   // Burger buns intended for BR are delivered directly from PK to the
-   // main Bukhara warehouse, in a separate transfer (no new Excel column).
-   // Remove this portion from PK→BK to avoid double receipt.
-   const burgerBun=isPastry&&productionNorm(entry.name).replace(/\s*\([^)]*\)\s*$/,'').trim()==='булочка для бургера';
-   const directBurgerQty=burgerBun?brQuantity||0:0;
+   // Route the BR allocation of burger buns directly from PK to the
+   // Bukhara main warehouse, regardless of whether Excel lists them in
+   // the ordinary dishes or pastry section.
+   const directBurgerQty=burgerBun?(brQuantity||0):0;
    if(isPastry&&pastryUpstream-directBurgerQty>0)
      add('Правда кухня','Бухара кухня',entry,pastryUpstream-directBurgerQty);
    if(directBurgerQty>0)
-     add('Правда кухня','Бухара основной склад',entry,directBurgerQty);
-   else if(isPastry&&brQuantity>0)
+     add('Правда кухня','Бухара Основной склад',entry,directBurgerQty);
+   if(isPastry&&brQuantity>0&&!burgerBun)
      add('Бухара кухня','Бухара раздача',entry,brQuantity);
   }
   if(invalidValues.length)
