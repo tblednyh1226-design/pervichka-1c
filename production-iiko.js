@@ -605,12 +605,22 @@ function productionBuild(){
          '», Раздача Правды ('+productionLetter(context.pastryColumns.prCol)+'): «'+
          String(rawPr??'').slice(0,35)+'». Есть положительные количества — пропускать нельзя.');
      const prCount=pr||0;
-     pastryUpstream=total-prCount;
-     if(pastryUpstream<0)
-       throw Error('Строка '+(i+1)+': выпечки для ПР больше, чем общее количество');
+     // Burger buns: "ИТОГО ФАСОВКА" can be zero while individual
+     // destination columns contain real quantities. Receive the amounts
+     // for ordinary outlets at BK; deliver BR's allocation directly to
+     // the main Bukhara warehouse from PK.
+     if(burgerBun){
+       pastryUpstream=[...quantities.entries()]
+         .filter(([point])=>point!=='Правда раздача'&&point!=='Бухара раздача'&&point!=='Мед экспресс'&&point!=='МЕГА')
+         .reduce((sum,[,count])=>sum+count,0)+brQuantity;
+     }else{
+       pastryUpstream=total-prCount;
+       if(pastryUpstream<0)
+         throw Error('Строка '+(i+1)+': выпечки для ПР больше, чем общее количество');
+       if(brQuantity>pastryUpstream)
+         throw Error('Строка '+(i+1)+': выпечки БР больше, чем «Всего» минус ПР');
+     }
      excludedPRPastry+=prCount;
-     if(brQuantity>pastryUpstream)
-       throw Error('Строка '+(i+1)+': выпечки БР больше, чем «Всего» минус ПР');
      if(brQuantity>0)brPastryMoved+=brQuantity;
    }
    if(!quantities.size&&!pastryUpstream&&!(burgerBun&&brQuantity>0))continue;
