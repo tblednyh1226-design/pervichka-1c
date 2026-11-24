@@ -10,7 +10,7 @@ const STAFF_WRITE_API=SUPABASE_URL+'/functions/v1/kolhoz-staff-writeoffs';
 const STAFF_ACCESS_STORAGE='kolhoz_staff_access_v1';
 const STAFF_WRITER_PREFIX='kolhoz_staff_writer_v1_';
 let staffAccessKey='',writerSecret='';
-const REASONS=['Порча','Бракераж','Брак','Служебное питание','Возврат от покупателя','Прочее','Срок годности','Проработка продукции'];
+const REASONS=['Порча','Бракераж','Брак','Служебное питание','Возврат от покупателя','Прочее','Срок годности','Проработка продукции','Переходящий остаток готовой продукции'];
 let userId = '', workspaceId = '', orgId = '';
 let catalog = [], catalogByName = new Map(), currentId = null, revision = null, currentStatus = 'draft';
 let entries = [], journalData = [];
