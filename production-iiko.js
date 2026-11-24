@@ -525,13 +525,17 @@ function productionBuild(){
       quantity:finalAmount,sourceRow:entry.sourceRow,sourceRows:[entry.sourceRow],
       ...(conversionFactor===8?{sourceQuantity:amount,conversionFactor:8,quantityUnit:'кус.'}:{})});
   }
+  let burgerBunRows=0,burgerBunRouted=0;
   let inputLines=0,excludedBRRegular=0,brPastryMoved=0,excludedPRPastry=0,etmDay=0,etmNight=0,emptyPastrySkipped=0;
   for(let i=context.header+1;i<context.pastry.end;i++){
    // Ignore every row after compotes and before the pastry heading.
    // None of these extras may enter quantity checks or iiko mappings.
-   if(i>context.pastry.compoteLast&&i<context.pastry.start)continue;
    const row=productionRows[i]||[];
    const name=String(row[1]??'').trim();
+   // Burger buns may be listed among the normally excluded extras.
+   // Keep that one product while continuing to exclude all other extras.
+   const isBurgerBun=/^булочк[аи]\s+для\s+бургер[а-я]*(?:\s|$|[.(])/u.test(productionNorm(name));
+   if(i>context.pastry.compoteLast&&i<context.pastry.start&&!isBurgerBun)continue;
    if(!name||productionNorm(name)==='наименование'||productionGroups.test(name))continue;
    const marker=productionNorm(row[0]);
    if(productionSkip.test(name)||marker==='выпечка'||productionGroups.test(marker)||marker==='меню'||marker==='№')continue;
@@ -587,7 +591,8 @@ function productionBuild(){
    const brQuantity=productionQuantity(rawBr);
    if(!productionBlankQuantity(rawBr)&&brQuantity===null)
      throw Error('Строка '+(i+1)+': некорректное количество БР');
-   const burgerBun=/^булочк[аи] для бургер[а-я]*(?:\s|$)/u.test(productionNorm(entry.name));
+   const burgerBun=isBurgerBun;
+   if(burgerBun)burgerBunRows++;
    if(!isPastry&&brQuantity>0&&!burgerBun)excludedBRRegular+=brQuantity;
    let pastryUpstream=0;
    if(isPastry){
@@ -627,8 +632,10 @@ function productionBuild(){
    const directBurgerQty=burgerBun?(brQuantity||0):0;
    if(isPastry&&pastryUpstream-directBurgerQty>0)
      add('Правда кухня','Бухара кухня',entry,pastryUpstream-directBurgerQty);
-   if(directBurgerQty>0)
+   if(directBurgerQty>0){
      add('Правда кухня','Бухара Основной склад',entry,directBurgerQty);
+     burgerBunRouted+=directBurgerQty;
+   }
    if(isPastry&&brQuantity>0&&!burgerBun)
      add('Бухара кухня','Бухара раздача',entry,brQuantity);
   }
@@ -680,6 +687,7 @@ function productionBuild(){
   const converted=productionDocuments.flatMap(d=>d.items).filter(x=>x.conversionFactor===8);
   document.getElementById('prodstatus').textContent=
     'Автоматически сформировано '+productionDocuments.length+' перемещений за '+productionSheetName+
+    '. Булочка для бургера: '+(burgerBunRouted?'отдельный акт на основной склад, '+burgerBunRouted+' шт.':burgerBunRows?'найдена, количество БР равно нулю':'не найдена в плане')+
     '. Пропущено незапланированных строк выпечки: '+emptyPastrySkipped+
     '. Крупные пироги: '+(converted.length?
       converted.length+' строк переведено в куски (×8).':'нет позиций для пересчёта ×8.')+
