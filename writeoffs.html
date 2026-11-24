@@ -75,7 +75,7 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
     <div class="tablewrap"><table><thead><tr><th>Номенклатура</th><th>Количество</th><th>Ед. изм.</th><th>Причина списания</th><th></th></tr></thead><tbody id="rows-all"></tbody></table></div>
    </section>
   </fieldset>
-  <datalist id="catalog"></datalist><datalist id="reasons"><option value="Порча"></option><option value="Бракераж"></option><option value="Брак"></option><option value="Служебное питание"></option><option value="Возврат от покупателя"></option><option value="Прочее"></option><option value="Срок годности"></option><option value="Проработка продукции"></option></datalist>
+  <datalist id="catalog"></datalist><datalist id="reasons"><option value="Порча"></option><option value="Бракераж"></option><option value="Брак"></option><option value="Служебное питание"></option><option value="Возврат от покупателя"></option><option value="Прочее"></option><option value="Срок годности"></option><option value="Проработка продукции"></option><option value="Переходящий остаток готовой продукции"></option></datalist>
   <section class="card"><div class="toolbar"><button type="button" id="saveBtn">Сохранить черновик</button><button type="button" id="submitBtn" class="primary">Отправить в журнал</button><button type="button" id="printBtn" class="primary">Печать / PDF</button><button type="button" id="excelBtn">Скачать Excel</button><span id="catalogStatus" class="muted"></span></div><p id="actionStatus" class="notice" role="status">Сохраните черновик или отправьте списание в общий журнал администратора.</p><p class="muted">Выберите причину в каждой строке. Списания передаются в общую базу и доступны администратору. Отправленные документы нельзя редактировать.</p></section>
   <section class="card" id="employeeJournalSection"><p class="muted">Здесь видны отправленные списания сотрудников «Колхоза» из общей базы и черновики, сохранённые с этого устройства. Из журнала можно открыть документ, распечатать его или выгрузить в Excel.</p><div class="sectiontitle"><h2>Журнал списаний</h2><button id="reloadBtn" type="button">Обновить</button></div>
    <div class="formgrid"><label>Статус<select id="statusFilter"><option value="">Все</option><option value="draft">Черновики</option><option value="submitted">Отправленные</option></select></label><label>Дата с<input id="dateFrom" type="date"></label><label>Дата по<input id="dateTo" type="date"></label></div>
@@ -86,6 +86,6 @@ input,select{min-width:0;width:100%;border:1px solid #d3dce7;border-radius:8px;b
 <div id="printArea" aria-hidden="true"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-<script src="writeoffs.js?v=20261124-product-testing1"></script>
+<script src="writeoffs.js?v=20261124-carryover-finished-products1"></script>
 <script src="writeoffs-print.js?v=20261103-a4-print1"></script>
 </body></html>
