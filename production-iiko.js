@@ -620,9 +620,16 @@ function productionBuild(){
    }
    // All pastry except PR is received by BK. Of that amount, BR receives
    // only its own pastry via BK→BR; ordinary BR dishes remain excluded.
-   if(isPastry&&pastryUpstream>0)
-     add('Правда кухня','Бухара кухня',entry,pastryUpstream);
-   if(isPastry&&brQuantity>0)
+   // Burger buns intended for BR are delivered directly from PK to the
+   // main Bukhara warehouse, in a separate transfer (no new Excel column).
+   // Remove this portion from PK→BK to avoid double receipt.
+   const burgerBun=isPastry&&productionNorm(entry.name).replace(/\s*\([^)]*\)\s*$/,'').trim()==='булочка для бургера';
+   const directBurgerQty=burgerBun?brQuantity||0:0;
+   if(isPastry&&pastryUpstream-directBurgerQty>0)
+     add('Правда кухня','Бухара кухня',entry,pastryUpstream-directBurgerQty);
+   if(directBurgerQty>0)
+     add('Правда кухня','Бухара основной склад',entry,directBurgerQty);
+   else if(isPastry&&brQuantity>0)
      add('Бухара кухня','Бухара раздача',entry,brQuantity);
   }
   if(invalidValues.length)
