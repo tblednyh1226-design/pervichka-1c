@@ -10,6 +10,7 @@ const STAFF_WRITE_API=SUPABASE_URL+'/functions/v1/kolhoz-staff-writeoffs';
 const STAFF_ACCESS_STORAGE='kolhoz_staff_access_v1';
 const STAFF_WRITER_PREFIX='kolhoz_staff_writer_v1_';
 let staffAccessKey='',writerSecret='';
+const STAFF_NAMES=['Шильников С.','Кононов П.','Петкау И.','Жиляев В.','Бородина А.'];
 const REASONS=['Порча','Бракераж','Брак','Служебное питание','Возврат от покупателя','Прочее','Срок годности','Проработка продукции','Переходящий остаток готовой продукции'];
 let userId = '', workspaceId = '', orgId = '';
 let catalog = [], catalogByName = new Map(), currentId = null, revision = null, currentStatus = 'draft';
@@ -42,7 +43,7 @@ function updateMode(){
 }
 
 function draftSnapshot(){
- return {id:currentId,revision,status:currentStatus,date:$('docDate').value,shift:$('shift').value,warehouse:$('warehouse').value,
+ return {id:currentId,revision,status:currentStatus,date:$('docDate').value,shift:$('shift').value,warehouse:$('warehouse').value,staff_name:$('staffName').value,
          entries:entries.map(x=>({...x}))};
 }
 function persist(){
@@ -109,7 +110,7 @@ function newForm(ask=true){
  if(ask&&dirty&&!confirm('Есть несохранённые изменения. Создать новый документ?'))return;
  if(ask||!loading)clearLocal();loading=true;
  currentId=null;revision=null;writerSecret='';currentStatus='draft';viewOnly=false;dirty=false;
- $('docDate').value=today();$('shift').value='';$('warehouse').value='';
+ $('docDate').value=today();$('shift').value='';$('warehouse').value='';$('staffName').value='';
  resetEntries();paintAll();loading=false;
  say('Новый документ. Можно заполнять постепенно; изменения временно сохраняются и в этом браузере.');
  window.scrollTo({top:0,behavior:'smooth'});
@@ -133,12 +134,14 @@ function collectRows(strict){
  return out;
 }
 function headerPayload(strict){
- const date=$('docDate').value,warehouse=$('warehouse').value;
+ const date=$('docDate').value,warehouse=$('warehouse').value,staffName=$('staffName').value;
+ if(strict&&!STAFF_NAMES.includes(staffName))throw new Error('Выберите ФИО сотрудника.');
+ if(staffName&&!STAFF_NAMES.includes(staffName))throw new Error('Недопустимое ФИО сотрудника.');
  if(!date)throw new Error('Выберите дату списания.');
  if(!warehouse)throw new Error('Выберите склад: Кулинария или Кондитерский цех.');
  const items=collectRows(strict);
  if(strict&&!items.length)throw new Error('Нельзя отправить пустое списание.');
- return {doc_date:date,shift:$('shift').value||null,warehouse,items};
+ return {doc_date:date,shift:$('shift').value||null,warehouse,staff_name:staffName||null,items};
 }
 async function withBusy(fn){
  if(busy)return;
@@ -269,7 +272,7 @@ function fillDocument(doc,copy=false){
  clearLocal();loading=true;
  currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;writerSecret=copy?'':getStaffWriter(doc.id);currentStatus=copy?'draft':doc.status;
  viewOnly=!copy&&doc.status==='draft'&&doc.created_by!==userId;dirty=false;
- $('docDate').value=doc.doc_date||today();$('shift').value=doc.shift||'';$('warehouse').value=doc.warehouse||'';
+ $('docDate').value=doc.doc_date||today();$('shift').value=doc.shift||'';$('warehouse').value=doc.warehouse||'';$('staffName').value=doc.staff_name||'';
  entries=(Array.isArray(doc.items)?doc.items:[]).map(item=>({...blank(),...item,key:crypto.randomUUID()}));
  if(currentStatus==='draft')while(entries.length<10)entries.push(blank());
  paintAll();loading=false;
@@ -286,11 +289,11 @@ function exportXlsx(doc){
  if(typeof XLSX==='undefined'){say('Не загружена библиотека Excel. Обновите страницу.','error');return}
  let items;
  try{items=doc?doc.items:collectRows(false)}catch(e){say(e.message,'error');return}
- const info=doc||{doc_date:$('docDate').value,shift:$('shift').value,warehouse:$('warehouse').value,status:currentStatus};
- const rows=[['Дата','Смена','Склад','Номенклатура','Код 1С','Количество','Ед. изм.','Причина','Статус']];
- for(const item of (items||[]))rows.push([niceDate(info.doc_date),info.shift||'',info.warehouse||'',item.name,item.code||'',String(item.qty).replace(',','.'),item.unit,item.reason,info.status==='submitted'?'Отправлено':'Черновик']);
+ const info=doc||{doc_date:$('docDate').value,shift:$('shift').value,warehouse:$('warehouse').value,staff_name:$('staffName').value,status:currentStatus};
+ const rows=[['Дата','Смена','Склад','ФИО','Номенклатура','Код 1С','Количество','Ед. изм.','Причина','Статус']];
+ for(const item of (items||[]))rows.push([niceDate(info.doc_date),info.shift||'',info.warehouse||'',info.staff_name||'',item.name,item.code||'',String(item.qty).replace(',','.'),item.unit,item.reason,info.status==='submitted'?'Отправлено':'Черновик']);
  const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(rows);
- ws['!cols']=[{wch:14},{wch:12},{wch:21},{wch:49},{wch:14},{wch:14},{wch:13},{wch:23},{wch:14}];
+ ws['!cols']=[{wch:14},{wch:12},{wch:21},{wch:20},{wch:49},{wch:14},{wch:14},{wch:13},{wch:23},{wch:14}];
  XLSX.utils.book_append_sheet(wb,ws,'Списание');
  XLSX.writeFile(wb,'Списание_Колхоз_'+(info.doc_date||today())+'.xlsx');
 }
@@ -305,7 +308,7 @@ function drawJournal(){
   const auth=d.created_by===userId;
   return '<div class="journal-row"><div><b>'+niceDate(d.doc_date)+' · '+esc(d.warehouse)
    +' <span class="tag '+(sent?'sent':'')+'">'+(sent?'Отправлено':'Черновик')+'</span></b>'
-   +'<small>'+(d.shift?esc(d.shift)+' · ':'')+summary+' поз. · создано '+new Date(d.created_at).toLocaleString('ru-RU')+'</small></div>'
+   +'<small>'+(d.shift?esc(d.shift)+' · ':'')+(d.staff_name?esc(d.staff_name)+' · ':'')+summary+' поз. · создано '+new Date(d.created_at).toLocaleString('ru-RU')+'</small></div>'
    +'<div class="actions"><button data-action="open" data-id="'+esc(d.id)+'">'+(sent?'Посмотреть':(auth?'Открыть':'Посмотреть'))+'</button>'
    +'<button data-action="copy" data-id="'+esc(d.id)+'">Создать копию</button>'
    +'<button data-action="excel" data-id="'+esc(d.id)+'">Excel</button>'
@@ -345,7 +348,7 @@ async function loadJournal(){
   drawJournal();
   return;
  }
- let query=sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,items,status,created_by,created_at,updated_at,submitted_at').eq('organization_id',orgId);
+ let query=sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,staff_name,items,status,created_by,created_at,updated_at,submitted_at').eq('organization_id',orgId);
  if($('statusFilter').value)query=query.eq('status',$('statusFilter').value);
  if($('dateFrom').value)query=query.gte('doc_date',$('dateFrom').value);
  if($('dateTo').value)query=query.lte('doc_date',$('dateTo').value);
@@ -413,7 +416,7 @@ function restore(){
  if(!raw||!raw.entries)return false;
  loading=true;
  currentId=raw.id||null;revision=raw.revision||null;writerSecret=currentId?getStaffWriter(currentId):'';currentStatus='draft';viewOnly=false;
- $('docDate').value=raw.date||today();$('shift').value=raw.shift||'';$('warehouse').value=raw.warehouse||'';
+ $('docDate').value=raw.date||today();$('shift').value=raw.shift||'';$('warehouse').value=raw.warehouse||'';$('staffName').value=raw.staff_name||'';
  let saved=[];
  if(Array.isArray(raw.entries))saved=raw.entries;
  else if(typeof raw.entries==='object'){
@@ -484,7 +487,7 @@ async function init(){
     let linked=journalData.find(x=>x.id===requestId);
     if(!linked&&guestMode)linked=readLocalJournal().find(x=>x.id===requestId);
     if(!linked&&!guestMode){
-     const reply=await sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,items,status,created_by,created_at,updated_at,submitted_at')
+     const reply=await sb.from('kolhoz_writeoffs').select('id,workspace_id,organization_id,doc_date,shift,warehouse,staff_name,items,status,created_by,created_at,updated_at,submitted_at')
       .eq('organization_id',orgId).eq('id',requestId).maybeSingle();
      if(reply.error)throw reply.error;
      linked=reply.data;
@@ -505,7 +508,7 @@ async function init(){
  }catch(e){console.error(e);say('Не удалось открыть списания: '+(e.message||e),'error');$('stateBadge').textContent='Ошибка'}
 }
 $('addRowBtn').addEventListener('click',()=>{entries.push(blank());paintRows();persist()});
-for(const field of ['docDate','shift','warehouse'])$(field).addEventListener('change',persist);
+for(const field of ['docDate','shift','warehouse','staffName'])$(field).addEventListener('change',persist);
 $('newBtn').addEventListener('click',()=>newForm());
 $('saveBtn').addEventListener('click',saveDraft);
 $('submitBtn').addEventListener('click',submit);
