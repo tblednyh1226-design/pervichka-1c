@@ -268,8 +268,8 @@ async function submit(){
  });
 }
 
-function fillDocument(doc,copy=false){
- clearLocal();loading=true;
+function fillDocument(doc,copy=false,preserveLocalDraft=false){
+ if(!preserveLocalDraft)clearLocal();loading=true;
  currentId=copy?null:doc.id;revision=copy?null:doc.updated_at;writerSecret=copy?'':getStaffWriter(doc.id);currentStatus=copy?'draft':doc.status;
  viewOnly=!copy&&doc.status==='draft'&&doc.created_by!==userId;dirty=false;
  $('docDate').value=doc.doc_date||today();$('shift').value=doc.shift||'';$('warehouse').value=doc.warehouse||'';$('staffName').value=doc.staff_name||'';
@@ -429,10 +429,51 @@ function restore(){
  return true;
 }
 
+async function openStaffDocumentFromLink(documentId){
+ guestMode=true;userId='guest';workspaceId='';orgId=GUEST_ORG_ID;
+ $('orgLabel').value='ИП Здобникова С. С.';
+ $('screen').hidden=true;
+ $('stateBadge').textContent='Загрузка документа';
+ say('Загружаю списание из журнала…');
+ if(!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(documentId))
+  throw new Error('Некорректная ссылка на списание.');
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+ let response;
+ try{
+  response=await fetch(SUPABASE_URL+'/functions/v1/pomogator-internal-journal',{
+   method:'POST',signal:controller.signal,headers:{'Content-Type':'text/plain'},
+   body:JSON.stringify({action:'detail',source:'staff',id:documentId})
+  });
+ }finally{clearTimeout(timer)}
+ const result=await response.json().catch(()=>({error:'Сервер вернул некорректный ответ.'}));
+ if(!response.ok||!result.document||result.document.id!==documentId)
+  throw new Error(result.error||'Списание не найдено в журнале.');
+ $('screen').hidden=false;
+ fillDocument({...result.document,created_by:null},false,true);
+ viewOnly=true;
+ updateMode();
+ $('stateBadge').textContent='Списание · просмотр';
+ $('storageModeNotice').textContent='Документ загружен из журнала. Доступны просмотр, печать и Excel. Данные изменять нельзя.';
+ $('newBtn').hidden=true;
+ $('saveBtn').hidden=true;
+ $('submitBtn').hidden=true;
+ $('addRowBtn').hidden=true;
+ $('employeeJournalSection').hidden=true;
+ $('jumpJournalBtn').hidden=true;
+ $('catalogStatus').textContent='';
+ say('Списание загружено из журнала. Доступны печать и Excel.','success');
+}
 async function init(){
  const login=$('loginCard');if(login)login.hidden=true;
  try{
   const requestedStaffDoc=new URLSearchParams(location.search).get('staffdoc');
+  // A direct link is a read-only document viewer, not the staff entry form.
+  // Do not wait for authorization, the nomenclature catalog or the journal:
+  // those independent calls can hang and leave an empty "new draft" on screen.
+  if(requestedStaffDoc){
+   await openStaffDocumentFromLink(requestedStaffDoc);
+   return;
+  }
   staffAccessKey=requestedStaffDoc?'':readStaffAccessKey();
   let session=null;
   try{const auth=await sb.auth.getSession();session=auth.data?.session||null}
@@ -464,23 +505,8 @@ async function init(){
   newForm(false);
   const results=await Promise.allSettled([loadCatalog(),loadJournal()]);
   const issues=results.filter(x=>x.status==='rejected').map(x=>x.reason?.message||'Ошибка получения данных');
-  const staffDocId=new URLSearchParams(location.search).get('staffdoc');
   const requestId=new URLSearchParams(location.search).get('writeoff');
-  if(staffDocId){
-   if(!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(staffDocId)){
-    say('Некорректная ссылка на списание сотрудника.','error');
-   }else{
-    const response=await fetch(SUPABASE_URL+'/functions/v1/pomogator-internal-journal',{
-     method:'POST',headers:{'Content-Type':'text/plain'},
-     body:JSON.stringify({action:'detail',source:'staff',id:staffDocId})
-    });
-    const result=await response.json();
-    if(!response.ok)throw new Error(result.error||'Не удалось загрузить списание сотрудника');
-    fillDocument({...result.document,created_by:null});
-    viewOnly=true;updateMode();
-    say('Списание сотрудника открыто без авторизации. Доступны печать и Excel.','success');
-   }
-  }else if(requestId){
+  if(requestId){
    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)){
     say('Некорректная ссылка на списание.','error');
    }else{
@@ -505,7 +531,7 @@ async function init(){
     say('Восстановлен последний сохранённый в общей базе черновик. Можно продолжать заполнение.','success');
    }else say(issues.length?'Форма открыта. '+issues.join('; '):'Страница готова: '+(guestMode?'передача в общий журнал '+(staffAccessKey?'подключена.':'ожидает ссылку сотрудника.'):'подключён общий журнал.'),issues.length?'error':'success');
   }
- }catch(e){console.error(e);say('Не удалось открыть списания: '+(e.message||e),'error');$('stateBadge').textContent='Ошибка'}
+ }catch(e){console.error(e);say('Не удалось открыть списания: '+(e?.name==='AbortError'?'сервер не ответил за 15 секунд':(e.message||e)),'error');$('stateBadge').textContent='Ошибка'}
 }
 $('addRowBtn').addEventListener('click',()=>{entries.push(blank());paintRows();persist()});
 for(const field of ['docDate','shift','warehouse','staffName'])$(field).addEventListener('change',persist);
