@@ -174,7 +174,7 @@ async function renderKolhozJournal(){
    const status=d.status==='submitted'?'Отправлено':'Черновик';
    return '<div class="orgrow'+(d.is_processed===true?' journal-processed':'')+'">'
     +'<span><b>'+title+'</b>'
-    +'<small>'+esc(status)+' · '+esc(d.shift||'Без смены')+' · '+label+'</small>'
+    +'<small>'+esc(status)+' · '+esc(d.shift||'Без смены')+(d.staff_name?' · '+esc(d.staff_name):'')+' · '+label+'</small>'
     +'</span><div class="journal-writeoff-actions">'
     +'<label class="journal-processing"><input type="checkbox" data-source="'+d._storage
     +'" data-writeoff-id="'+esc(d.id)+'"'+(d.is_processed===true?' checked':d.is_processed===null?' disabled':'')+'> Обработано</label>'
