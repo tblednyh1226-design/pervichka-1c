@@ -4,7 +4,7 @@ const PRINT_STAFF_REASONS=new Set(['служебное питание','пита
 const PRINT_UTIL_TITLE='УТИЛИЗАЦИЯ (срок годности, брак, порча, возврат от покупателя)';
 
 function getWriteoffPrintData(doc){
- const info=doc||{doc_date:$('docDate').value,shift:$('shift').value,warehouse:$('warehouse').value,status:currentStatus};
+ const info=doc||{doc_date:$('docDate').value,shift:$('shift').value,warehouse:$('warehouse').value,staff_name:$('staffName').value,status:currentStatus};
  const original=doc?(Array.isArray(doc.items)?doc.items:[]):collectRows(false);
  const items=original.filter(x=>String(x.name||'').trim().length>0);
  const staff=[],util=[];
@@ -35,7 +35,8 @@ function printWriteoff(doc){
  area.innerHTML='<div class="print-sheet">'
   +'<div class="print-top"><h1>БЛАНК СПИСАНИЯ</h1>'
   +'<div class="print-meta"><div><b>Дата:</b> '+esc(niceDate(info.doc_date))+'</div>'
-  +'<div><b>Смена:</b> '+esc(info.shift||'—')+'</div></div></div>'
+  +'<div><b>Смена:</b> '+esc(info.shift||'—')+'</div>'
+   +'<div><b>ФИО:</b> '+esc(info.staff_name||'—')+'</div></div></div>'
   +'<div class="print-org"><span><b>Организация:</b> ИП Здобникова С. С.</span>'
   +'<span><b>Склад:</b> '+esc(info.warehouse||'—')+'</span></div>'
   +'<table class="print-table"><colgroup><col style="width:14%"><col style="width:48%"><col style="width:16%"><col style="width:22%"></colgroup>'
@@ -51,6 +52,7 @@ function excelPrintWorksheet(data){
   ['БЛАНК СПИСАНИЯ','','',''],
   ['Организация','ИП Здобникова С. С.','Дата:',niceDate(info.doc_date)],
   ['Склад',info.warehouse||'—','Смена:',info.shift||'—'],
+  ['ФИО',info.staff_name||'—','',''],
   ['Дата','Наименование','Кол-во','Причина']
  ];
  const sectionRows=[];
@@ -71,14 +73,14 @@ function excelPrintWorksheet(data){
  const ws=XLSX.utils.aoa_to_sheet(rows);
  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:3}},...sectionRows.map(r=>({s:{r,c:0},e:{r,c:3}}))];
  ws['!cols']=[{wch:13},{wch:47},{wch:16},{wch:25}];
- ws['!rows']=rows.map((_,r)=>({hpt:r===0?40:(r===1||r===2)?25:r===3?30:sectionRows.includes(r)?31:28}));
+ ws['!rows']=rows.map((_,r)=>({hpt:r===0?40:(r>=1&&r<=3)?25:r===4?30:sectionRows.includes(r)?31:28}));
  ws['!margins']={left:0.28,right:0.28,top:0.4,bottom:0.4,header:0.2,footer:0.2};
  const edge={style:'thin',color:{rgb:'000000'}};
  const outline={top:edge,bottom:edge,left:edge,right:edge};
  for(let r=0;r<rows.length;r++)for(let c=0;c<4;c++){
   const address=XLSX.utils.encode_cell({r,c});
   const cell=ws[address]||(ws[address]={t:'s',v:''});
-  const title=r===0,meta=r===1||r===2,head=r===3,section=sectionRows.includes(r);
+  const title=r===0,meta=r>=1&&r<=3,head=r===4,section=sectionRows.includes(r);
   cell.s={
    font:{name:'Arial',sz:title?22:head?12:section?10:11,
     bold:title||head||section||(meta&&(c===0||c===2)),color:{rgb:'111111'}},
@@ -97,17 +99,17 @@ function exportWriteoffStyled(doc){
  XLSX.utils.book_append_sheet(wb,excelPrintWorksheet(data),'Бланк списания');
  // Отдельная табличная вкладка сохраняет детали, включая код и единицу измерения.
  const info=data.info;
- const rows=[['Дата','Смена','Склад','Номенклатура','Код 1С','Количество','Ед. изм.','Причина','Статус']];
+ const rows=[['Дата','Смена','Склад','ФИО','Номенклатура','Код 1С','Количество','Ед. изм.','Причина','Статус']];
  for(const item of data.items)rows.push([
-  niceDate(info.doc_date),info.shift||'',info.warehouse||'',item.name,item.code||'',
+  niceDate(info.doc_date),info.shift||'',info.warehouse||'',info.staff_name||'',item.name,item.code||'',
   String(item.qty||'').replace(',','.'),item.unit||'',item.reason||'',
   info.status==='submitted'?'Отправлено':'Черновик'
  ]);
  const sheet=XLSX.utils.aoa_to_sheet(rows);
- sheet['!cols']=[{wch:14},{wch:12},{wch:21},{wch:48},{wch:14},{wch:14},{wch:13},{wch:25},{wch:14}];
+ sheet['!cols']=[{wch:14},{wch:12},{wch:21},{wch:20},{wch:48},{wch:14},{wch:14},{wch:13},{wch:25},{wch:14}];
  sheet['!rows']=[{hpt:28}];
- sheet['!autofilter']={ref:'A1:I'+Math.max(1,rows.length)};
- for(let c=0;c<9;c++){
+ sheet['!autofilter']={ref:'A1:J'+Math.max(1,rows.length)};
+ for(let c=0;c<10;c++){
   const key=XLSX.utils.encode_cell({r:0,c});
   if(sheet[key])sheet[key].s={font:{name:'Arial',sz:11,bold:true,color:{rgb:'FFFFFF'}},
    fill:{patternType:'solid',fgColor:{rgb:'34465A'}},
