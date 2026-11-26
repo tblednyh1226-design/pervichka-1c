@@ -54,6 +54,72 @@ function persist(){
 }
 function clearLocal(){try{localStorage.removeItem(storeKey())}catch(_){}}
 
+
+const searchKey=v=>String(v||'').trim().toLocaleLowerCase('ru').replace(/ё/g,'е');
+let searchMenu=null,searchInput=null,searchRow=null,searchLine=null,searchMatches=[],searchIndex=-1;
+function closeSearchMenu(){
+ if(searchMenu)searchMenu.hidden=true;
+ searchInput=null;searchRow=null;searchLine=null;searchMatches=[];searchIndex=-1;
+}
+function positionSearchMenu(){
+ if(!searchMenu||searchMenu.hidden||!searchInput)return;
+ const r=searchInput.getBoundingClientRect();
+ const w=Math.min(Math.max(r.width,310),window.innerWidth-16);
+ searchMenu.style.width=w+'px';
+ searchMenu.style.left=Math.max(8,Math.min(r.left,window.innerWidth-w-8))+'px';
+ const h=Math.min(searchMenu.scrollHeight,280),below=window.innerHeight-r.bottom;
+ searchMenu.style.top=(below<h+8&&r.top>below?Math.max(8,r.top-h-4):r.bottom+4)+'px';
+}
+function useSearchMatch(index){
+ const found=searchMatches[index],input=searchInput,line=searchLine,tr=searchRow;
+ if(!found||!input||!line||!tr)return;
+ input.value=found.name;line.name=found.name;
+ applyCatalogMatch(line,tr);persist();closeSearchMenu();input.focus();
+}
+function openSearchMenu(input,line,tr){
+ if(input.disabled||viewOnly||currentStatus==='submitted'){closeSearchMenu();return}
+ const q=searchKey(input.value);if(!q){closeSearchMenu();return}
+ if(!searchMenu){
+  searchMenu=document.createElement('div');
+  searchMenu.id='nomenclatureSearchMenu';searchMenu.className='search-menu';
+  searchMenu.setAttribute('role','listbox');searchMenu.hidden=true;
+  searchMenu.addEventListener('mousedown',e=>e.preventDefault());
+  searchMenu.addEventListener('click',e=>{
+   const btn=e.target.closest('[data-search-index]');
+   if(btn)useSearchMatch(Number(btn.dataset.searchIndex));
+  });
+  document.body.appendChild(searchMenu);
+ }
+ searchInput=input;searchLine=line;searchRow=tr;searchIndex=-1;
+ const found=catalog.filter(x=>searchKey(x.name).includes(q));
+ found.sort((a,b)=>Number(searchKey(b.name).startsWith(q))-Number(searchKey(a.name).startsWith(q))||a.name.localeCompare(b.name,'ru'));
+ searchMatches=found.slice(0,30);
+ searchMenu.innerHTML=!catalog.length
+  ?'<div class="search-menu-info">Справочник загружается…</div>'
+  :searchMatches.length
+    ?searchMatches.map((x,i)=>'<button type="button" class="search-menu-option" role="option" aria-selected="false" data-search-index="'+i+'"><span>'+esc(x.name)+'</span><small>'+esc(x.unit||'')+'</small></button>').join('')
+      +(found.length>30?'<div class="search-menu-info">Ещё '+(found.length-30)+' совпадений. Уточните название.</div>':'')
+    :'<div class="search-menu-info">Совпадений не найдено</div>';
+ searchMenu.hidden=false;searchMenu.scrollTop=0;positionSearchMenu();
+}
+function searchMenuKeydown(e){
+ if(!searchMenu||searchMenu.hidden)return;
+ if(e.key==='Escape'){e.preventDefault();closeSearchMenu();return}
+ if(!searchMatches.length)return;
+ if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+  e.preventDefault();searchIndex=(searchIndex+(e.key==='ArrowDown'?1:-1)+searchMatches.length)%searchMatches.length;
+  searchMenu.querySelectorAll('[data-search-index]').forEach((b,i)=>{
+   b.classList.toggle('selected',i===searchIndex);b.setAttribute('aria-selected',String(i===searchIndex));
+  });
+  searchMenu.querySelector('[data-search-index="'+searchIndex+'"]')?.scrollIntoView({block:'nearest'});
+ }else if(e.key==='Enter'&&searchIndex>=0){e.preventDefault();useSearchMatch(searchIndex)}
+}
+document.addEventListener('pointerdown',e=>{
+ if(searchMenu&&!searchMenu.hidden&&!searchMenu.contains(e.target)&&e.target!==searchInput)closeSearchMenu();
+});
+document.addEventListener('scroll',()=>{if(searchInput)positionSearchMenu()},true);
+window.addEventListener('resize',()=>{if(searchInput)positionSearchMenu()});
+
 function applyCatalogMatch(line,tr){
   line.nomenclature_id=null;line.code='';
   const matches=catalogByName.get(line.name.trim().toLocaleLowerCase('ru').replace(/ё/g,'е'))||[];
@@ -74,10 +140,11 @@ function applyCatalogMatch(line,tr){
   }
 }
 function paintRows(){
+ closeSearchMenu();
  const tbody=$('rows-all');tbody.replaceChildren();
  entries.forEach((line)=>{
   const tr=document.createElement('tr');
-  tr.innerHTML='<td><input class="item-name" data-field="name" list="catalog" placeholder="Начните вводить название" autocomplete="off"></td>'
+  tr.innerHTML='<td><input class="item-name" data-field="name" placeholder="Начните вводить название" autocomplete="off"></td>'
    +'<td><input class="item-qty" data-field="qty" type="text" inputmode="decimal" placeholder="0,000"></td>'
    +'<td><input class="item-unit" data-field="unit" placeholder="Ед."></td>'
    +'<td><select class="item-reason" data-field="reason"><option value="">Выберите причину</option>'+REASONS.map(r=>'<option value="'+esc(r)+'">'+esc(r)+'</option>').join('')+'</select></td>'
@@ -96,7 +163,12 @@ function paintRows(){
       line.nomenclature_id=matches.find(x=>x.unit.trim()===line.unit.trim())?.id||null;
     }
     persist();
+    if(field==='name')openSearchMenu(input,line,tr);
    });
+   if(field==='name'){
+    input.addEventListener('focus',()=>openSearchMenu(input,line,tr));
+    input.addEventListener('keydown',searchMenuKeydown);
+   }
   }
   tr.querySelector('.remove').addEventListener('click',()=>{
     entries=entries.filter(r=>r.key!==line.key);paintRows();persist();
@@ -383,7 +455,7 @@ async function loadCatalog(){
  catalog=[];let from=0;
  while(from<15000){
   if(guestMode){
-   const response=await fetch(GUEST_CATALOG_URL,{method:'GET',headers:{Accept:'application/json'}});
+   const response=await fetch(GUEST_CATALOG_URL,{method:'GET',cache:'no-store',headers:{Accept:'application/json'}});
    const data=await response.json();
    if(!response.ok||!data.ok)throw new Error(data.error||'Не удалось загрузить справочник');
    catalog.push(...data.rows);break;
@@ -408,6 +480,7 @@ async function loadCatalog(){
   list.appendChild(opt);
  }
  updateMode();
+ if(searchInput&&searchLine&&searchRow)openSearchMenu(searchInput,searchLine,searchRow);
 }
 
 function restore(){
