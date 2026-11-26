@@ -38,7 +38,7 @@ function updateMode(){
  $('submitBtn').disabled=sent||busy||needsStaffLink;
  $('submitBtn').textContent=sent?'Уже отправлено':'Отправить в журнал';
  $('stateBadge').textContent=(guestMode?(staffAccessKey?'Общая база · ':'Нужна ссылка · '):'')+(viewOnly?'Черновик · просмотр':(currentStatus==='submitted'?'Отправлено':(currentId?'Черновик в журнале':'Новый черновик')));
- $('catalogStatus').textContent=catalog.length?'Справочник: '+catalog.length+' позиций':'Справочник пока пуст';
+ $('catalogStatus').textContent='Поиск по названию от 2 букв';
  repaintCounts();
 }
 
@@ -57,7 +57,14 @@ function clearLocal(){try{localStorage.removeItem(storeKey())}catch(_){}}
 
 const searchKey=v=>String(v||'').trim().toLocaleLowerCase('ru').replace(/ё/g,'е');
 let searchMenu=null,searchInput=null,searchRow=null,searchLine=null,searchMatches=[],searchIndex=-1;
+let searchDebounce=null,searchController=null,searchToken=0;
+const searchCache=new Map();
+function cancelSearchRequest(){
+ if(searchDebounce!==null){clearTimeout(searchDebounce);searchDebounce=null}
+ if(searchController){searchController.abort();searchController=null}
+}
 function closeSearchMenu(){
+ cancelSearchRequest();searchToken++;
  if(searchMenu)searchMenu.hidden=true;
  searchInput=null;searchRow=null;searchLine=null;searchMatches=[];searchIndex=-1;
 }
@@ -73,12 +80,38 @@ function positionSearchMenu(){
 function useSearchMatch(index){
  const found=searchMatches[index],input=searchInput,line=searchLine,tr=searchRow;
  if(!found||!input||!line||!tr)return;
- input.value=found.name;line.name=found.name;
- applyCatalogMatch(line,tr);persist();closeSearchMenu();input.focus();
+ input.value=found.name;
+ line.name=found.name;line.nomenclature_id=found.id||null;line.code='';
+ line.unit=found.unit||'';
+ tr.querySelector('[data-field="unit"]').value=line.unit;
+ input.title='';
+ persist();closeSearchMenu();input.focus();
+}
+function drawSearchMatches(rows,term){
+ searchMatches=[...rows].sort((a,b)=>
+  Number(searchKey(b.name).startsWith(searchKey(term)))-
+  Number(searchKey(a.name).startsWith(searchKey(term)))||
+  a.name.localeCompare(b.name,'ru')).slice(0,30);
+ searchIndex=-1;
+ if(!searchMatches.length){
+  searchMenu.innerHTML='<div class="search-menu-info">Совпадений не найдено</div>';
+ }else{
+  searchMenu.innerHTML=searchMatches.map((x,i)=>
+   '<button type="button" class="search-menu-option" role="option" aria-selected="false" data-search-index="'+i+'"><span>'+
+   esc(x.name)+'</span><small>'+esc(x.unit||'')+'</small></button>').join('')+
+   (rows.length>30?'<div class="search-menu-info">Есть и другие результаты — уточните название.</div>':'');
+  // Cache exact matches for manual unit edits, without downloading 1538 items.
+  for(const item of rows){
+   const key=searchKey(item.name),same=catalogByName.get(key)||[];
+   if(!same.some(x=>x.id===item.id))catalogByName.set(key,[...same,item]);
+  }
+ }
+ positionSearchMenu();
 }
 function openSearchMenu(input,line,tr){
  if(input.disabled||viewOnly||currentStatus==='submitted'){closeSearchMenu();return}
- const q=searchKey(input.value);if(!q){closeSearchMenu();return}
+ const term=String(input.value||'').trim(),q=searchKey(term);
+ if(!q){closeSearchMenu();return}
  if(!searchMenu){
   searchMenu=document.createElement('div');
   searchMenu.id='nomenclatureSearchMenu';searchMenu.className='search-menu';
@@ -90,17 +123,44 @@ function openSearchMenu(input,line,tr){
   });
   document.body.appendChild(searchMenu);
  }
- searchInput=input;searchLine=line;searchRow=tr;searchIndex=-1;
- const found=catalog.filter(x=>searchKey(x.name).includes(q));
- found.sort((a,b)=>Number(searchKey(b.name).startsWith(q))-Number(searchKey(a.name).startsWith(q))||a.name.localeCompare(b.name,'ru'));
- searchMatches=found.slice(0,30);
- searchMenu.innerHTML=!catalog.length
-  ?'<div class="search-menu-info">Справочник загружается…</div>'
-  :searchMatches.length
-    ?searchMatches.map((x,i)=>'<button type="button" class="search-menu-option" role="option" aria-selected="false" data-search-index="'+i+'"><span>'+esc(x.name)+'</span><small>'+esc(x.unit||'')+'</small></button>').join('')
-      +(found.length>30?'<div class="search-menu-info">Ещё '+(found.length-30)+' совпадений. Уточните название.</div>':'')
-    :'<div class="search-menu-info">Совпадений не найдено</div>';
- searchMenu.hidden=false;searchMenu.scrollTop=0;positionSearchMenu();
+ cancelSearchRequest();
+ const token=++searchToken;
+ searchInput=input;searchLine=line;searchRow=tr;searchIndex=-1;searchMatches=[];
+ searchMenu.hidden=false;
+ if(term.length<2){
+  searchMenu.innerHTML='<div class="search-menu-info">Введите минимум 2 буквы</div>';
+  positionSearchMenu();return;
+ }
+ const cached=searchCache.get(q);
+ if(cached && Date.now()-cached.at<60000){
+  drawSearchMatches(cached.rows,term);return;
+ }
+ searchMenu.innerHTML='<div class="search-menu-info">Ищу номенклатуру…</div>';
+ positionSearchMenu();
+ searchDebounce=setTimeout(async()=>{
+  searchDebounce=null;
+  const controller=new AbortController();
+  searchController=controller;
+  const deadline=setTimeout(()=>controller.abort(),8000);
+  try{
+   const url=GUEST_CATALOG_URL+'?q='+encodeURIComponent(term);
+   const response=await fetch(url,{method:'GET',cache:'no-store',signal:controller.signal,
+    headers:{Accept:'application/json'}});
+   const result=await response.json();
+   if(!response.ok||!result.ok||!Array.isArray(result.rows))throw new Error(result.error||'Сервер не ответил');
+   if(token!==searchToken||searchInput!==input||searchKey(input.value)!==q)return;
+   searchCache.set(q,{rows:result.rows,at:Date.now()});
+   drawSearchMatches(result.rows,term);
+  }catch(error){
+   if(token!==searchToken||searchInput!==input||controller.signal.aborted&&error?.name==='AbortError'&&searchKey(input.value)!==q)return;
+   searchMenu.innerHTML='<div class="search-menu-info">Поиск недоступен. Нажмите в поле ещё раз, чтобы повторить.</div>';
+   positionSearchMenu();
+   console.warn('Ошибка поиска номенклатуры',error);
+  }finally{
+   clearTimeout(deadline);
+   if(searchController===controller)searchController=null;
+  }
+ },180);
 }
 function searchMenuKeydown(e){
  if(!searchMenu||searchMenu.hidden)return;
@@ -549,8 +609,15 @@ async function init(){
   }
   staffAccessKey=requestedStaffDoc?'':readStaffAccessKey();
   let session=null;
-  try{const auth=await sb.auth.getSession();session=auth.data?.session||null}
-  catch(error){console.warn('Сессия недоступна, доступен локальный режим',error)}
+  if(!staffAccessKey){
+   try{
+    const auth=await Promise.race([
+     sb.auth.getSession(),
+     new Promise(resolve=>setTimeout(()=>resolve({data:{session:null}}),3000))
+    ]);
+    session=auth.data?.session||null;
+   }catch(error){console.warn('Сессия недоступна, доступен локальный режим',error)}
+  }
   if(session&&!staffAccessKey){
    try{
     userId=session.user.id;
@@ -576,8 +643,13 @@ async function init(){
    : 'Документы сохраняются в общем облачном журнале.';
   $('screen').hidden=false;
   newForm(false);
-  const results=await Promise.allSettled([loadCatalog(),loadJournal()]);
-  const issues=results.filter(x=>x.status==='rejected').map(x=>x.reason?.message||'Ошибка получения данных');
+  // The editor works immediately; neither the full catalog nor journal fetch
+  // may block search, draft recovery or entering a writeoff.
+  const issues=[];
+  loadJournal().catch(e=>{
+   console.warn('Не удалось открыть журнал списаний',e);
+   const holder=$('journal');if(holder)holder.textContent='Журнал временно недоступен. Нажмите «Обновить».';
+  });
   const requestId=new URLSearchParams(location.search).get('writeoff');
   if(requestId){
    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)){
