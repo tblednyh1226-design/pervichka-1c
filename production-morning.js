@@ -277,6 +277,34 @@ function morningAnalyze(book,date){
   const chosen=morningIikoColumn(ws,rows,header);
   const columns={iiko:chosen,candidates:[chosen]};
   const bounds=morningFindSections(rows,header);
+  // The iiko total excludes the separate Module frozen allocation.
+  // Add it once per dish, before the existing pie conversion.
+  const frozenTitle=v=>/^модул(?:ь)?\s+замор(?:озка)?\.?$/.test(morningNorm(v));
+  const frozenColumns=(h)=>[...new Set((rows[h]||[]).map((v,i)=>frozenTitle(v)?i:-1).filter(i=>i>=0&&i!==chosen.col))];
+  const mainFrozen=frozenColumns(header.row);
+  let pastryHeader=-1;
+  for(let i=bounds.pastryStart;i<Math.min(bounds.nextAfterPastry,bounds.pastryStart+10);i++){
+    if(/^(наименование|наименование блюда|блюдо|название блюда)$/.test(morningNorm(rows[i]?.[header.nameCol]))){pastryHeader=i;break;}
+  }
+  const pastryFrozen=pastryHeader>=0?frozenColumns(pastryHeader):mainFrozen;
+  for(let i=header.row+1;i<bounds.nextAfterPastry;i++){
+    if(i===pastryHeader||i===bounds.pastryStart||(i>bounds.compoteLast&&i<bounds.pastryStart))continue;
+    const cols=i>bounds.pastryStart?pastryFrozen:mainFrozen;
+    const row=rows[i]||[];
+    let extra=0;
+    for(const col of cols){
+      const raw=row[col],n=morningNumber(raw);
+      if(n!==null&&n>0)extra+=n;
+      else if(n===null&&raw!=null&&String(raw).trim()&&!/^[-—–]$/.test(String(raw).trim()))
+        throw Error('Строка '+(i+1)+': некорректное количество Модуль замор');
+    }
+    if(extra>0){
+      const base=morningNumber(row[chosen.col]);
+      if(base===null&&String(row[chosen.col]??'').trim()&&!/^[-—–]$/.test(String(row[chosen.col]).trim()))
+        throw Error('Строка '+(i+1)+': некорректное количество iiko');
+      row[chosen.col]=(base||0)+extra;
+    }
+  }
   const warnings=[];
   // Do not include "допы" in the kitchen if the compote boundary cannot
   // be detected. Better stop than silently send the wrong nomenclature.
@@ -335,7 +363,7 @@ function morningPrintResult(){
   const convertedPieces=slices.reduce((n,x)=>n+x.quantity,0);
   const conversionNote=slices.length?'<p><b>Большие пироги:</b> '+morningEscape(convertedPies)+
     ' пирогов × 8 = '+morningEscape(convertedPieces)+' кусков. В акты включены куски.</p>':'';
-  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Источник количеств — iiko (столбец <b>'+morningEscape(r.selected.label)+'</b>).</p>'+warnings+conversionNote+cards;
+  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Источник количеств — iiko + Модуль замор (iiko: столбец <b>'+morningEscape(r.selected.label)+'</b>).</p>'+warnings+conversionNote+cards;
   status.textContent='Предпросмотр готов. Это НЕ документы iiko. Никаких перемещений, расходных и проведения.';
   if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
   if(typeof iikoLiveEnsureCatalog==='function')void iikoLiveEnsureCatalog();
