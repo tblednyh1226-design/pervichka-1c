@@ -201,7 +201,7 @@ function productionPoint(name){
  if(/^(раздача бухара|бухара раздача|бр)$/.test(n))return 'Бухара раздача';
  if(/^этм(?: день| ночь)?$/.test(n))return 'ЭТМ';
  if(/^бестужевская$/.test(n))return 'Бестужевская';
- if(/^модул(?:ь)?$/.test(n))return 'Модуль';
+ if(/^модул(?:ь)?(?: замор(?:озка)?\.?)?$/.test(n))return 'Модуль';
  if(/^мега$/.test(n))return 'МЕГА'; // Recognize for exclusion only.
  // "Рэдм" is how this outlet is abbreviated in the production sheet.
  // Accept either е or э, full names, punctuation and optional qualifiers.
@@ -415,15 +415,12 @@ function productionSelectSheet(){
  const allReceivers=heads.map((v,col)=>({name:String(v??'').trim(),col,point:productionPoint(v)}))
    .filter(x=>x.name&&x.col>=4&&x.point&&(!hasClassification||Boolean(productionPoint(classification[x.col])))&&
       x.point!=='Бухара раздача'&&x.point!=='Мед экспресс'&&x.point!=='МЕГА');
- const etmSources=allReceivers.filter(x=>x.point==='ЭТМ');
- const options=allReceivers.filter(x=>x.point!=='ЭТМ');
- if(etmSources.length){
-   // One visible selector controls both ETM DAY and NIGHT columns.
-   // The underlying values stay separate until summed per dish below.
-   const first=etmSources[0];
-   options.splice(allReceivers.indexOf(first),0,{
-     name:'ЭТМ',col:first.col,point:'ЭТМ',sources:etmSources
-   });
+ const options=[];
+ for(const receiver of allReceivers){
+   if(!['ЭТМ','Модуль'].includes(receiver.point)){options.push(receiver);continue;}
+   if(options.some(x=>x.point===receiver.point))continue;
+   options.push({name:receiver.point,col:receiver.col,point:receiver.point,
+     sources:allReceivers.filter(x=>x.point===receiver.point)});
  }
  const unknown=heads.map((v,col)=>({name:String(v??'').trim(),col}))
    .filter(x=>x.name&&x.col>=4&&!productionSkip.test(x.name)&&
