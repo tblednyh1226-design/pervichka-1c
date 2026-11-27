@@ -274,36 +274,38 @@ function morningAnalyze(book,date){
   const ws=morningSheetOnDemand(book,sheet);
   const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});
   const header=morningGetHeader(rows);
-  const chosen=morningIikoColumn(ws,rows,header);
-  const columns={iiko:chosen,candidates:[chosen]};
   const bounds=morningFindSections(rows,header);
-  // The iiko total excludes the separate Module frozen allocation.
-  // Add it once per dish, before the existing pie conversion.
-  const frozenTitle=v=>/^модул(?:ь)?\s+замор(?:озка)?\.?$/.test(morningNorm(v));
-  const frozenColumns=(h)=>[...new Set((rows[h]||[]).map((v,i)=>frozenTitle(v)?i:-1).filter(i=>i>=0&&i!==chosen.col))];
-  const mainFrozen=frozenColumns(header.row);
+  // Sum individual outlet and customer allocations, never aggregate columns.
+  const norm=v=>morningNorm(v).replace(/[^a-zа-я0-9]+/gi,' ').trim();
+  const buyer=/^(?:янино|навык|зидки|эйджи|обухово|ревада|крокид|нпп|сервис ман|гранд капитал)(?:\s|$)/;
+  const allocation=v=>{
+    const n=norm(v);
+    return Boolean(n&&(buyer.test(n)|| (typeof productionPoint==='function'&&productionPoint(v))||/^р[еэ]дм\s*фас(?:\s|$)/.test(n)));
+  };
+  const sourceColumns=h=>(rows[h]||[]).map((v,col)=>({v,col})).filter(x=>x.col>=4&&allocation(x.v)).map(x=>x.col);
+  const main=sourceColumns(header.row);
+  if(!main.length)throw Error('Не найдены столбцы точек и покупателей для актов приготовления.');
   let pastryHeader=-1;
   for(let i=bounds.pastryStart;i<Math.min(bounds.nextAfterPastry,bounds.pastryStart+10);i++){
     if(/^(наименование|наименование блюда|блюдо|название блюда)$/.test(morningNorm(rows[i]?.[header.nameCol]))){pastryHeader=i;break;}
   }
-  const pastryFrozen=pastryHeader>=0?frozenColumns(pastryHeader):mainFrozen;
+  const pastry=pastryHeader>=0?sourceColumns(pastryHeader):main;
+  if(!pastry.length)throw Error('Не найдены столбцы точек в разделе выпечки.');
+  const chosen={col:Math.max(...rows.map(row=>row.length))+1,label:'сумма точек и покупателей',name:'сумма'};
+  const columns={iiko:chosen,candidates:[chosen]};
   for(let i=header.row+1;i<bounds.nextAfterPastry;i++){
     if(i===pastryHeader||i===bounds.pastryStart||(i>bounds.compoteLast&&i<bounds.pastryStart))continue;
-    const cols=i>bounds.pastryStart?pastryFrozen:mainFrozen;
     const row=rows[i]||[];
-    let extra=0;
-    for(const col of cols){
+    const name=morningNorm(row[header.nameCol]);
+    if(!name||morningIsGroup(name)||morningIsGroup(row[0])||/^(всего|итого|остаток|сумма|план|дата|заказ|наименование)/.test(name))continue;
+    let qty=0;
+    for(const col of (i>bounds.pastryStart?pastry:main)){
       const raw=row[col],n=morningNumber(raw);
-      if(n!==null&&n>0)extra+=n;
+      if(n!==null&&n>0)qty+=n;
       else if(n===null&&raw!=null&&String(raw).trim()&&!/^[-—–]$/.test(String(raw).trim()))
-        throw Error('Строка '+(i+1)+': некорректное количество Модуль замор');
+        throw Error('Строка '+(i+1)+': некорректное количество в столбце '+(col+1));
     }
-    if(extra>0){
-      const base=morningNumber(row[chosen.col]);
-      if(base===null&&String(row[chosen.col]??'').trim()&&!/^[-—–]$/.test(String(row[chosen.col]).trim()))
-        throw Error('Строка '+(i+1)+': некорректное количество iiko');
-      row[chosen.col]=(base||0)+extra;
-    }
+    row[chosen.col]=qty;
   }
   const warnings=[];
   // Do not include "допы" in the kitchen if the compote boundary cannot
@@ -363,7 +365,7 @@ function morningPrintResult(){
   const convertedPieces=slices.reduce((n,x)=>n+x.quantity,0);
   const conversionNote=slices.length?'<p><b>Большие пироги:</b> '+morningEscape(convertedPies)+
     ' пирогов × 8 = '+morningEscape(convertedPieces)+' кусков. В акты включены куски.</p>':'';
-  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Источник количеств — iiko + Модуль замор (iiko: столбец <b>'+morningEscape(r.selected.label)+'</b>).</p>'+warnings+conversionNote+cards;
+  area.innerHTML='<p>Дата актов: <b>'+r.date.day+'.'+r.date.month+'.'+r.date.year+'</b>. Вкладка: <b>'+morningEscape(r.sheet)+'</b>. Источник количеств — <b>'+morningEscape(r.selected.label)+'</b>.</p>'+warnings+conversionNote+cards;
   status.textContent='Предпросмотр готов. Это НЕ документы iiko. Никаких перемещений, расходных и проведения.';
   if(typeof iikoDraftAutoCheck==='function')iikoDraftAutoCheck();
   if(typeof iikoLiveEnsureCatalog==='function')void iikoLiveEnsureCatalog();
